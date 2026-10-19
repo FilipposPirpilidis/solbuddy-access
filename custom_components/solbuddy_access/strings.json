@@ -1,0 +1,19 @@
+{
+  "title": "SOLBUDDY Access",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up SOLBUDDY Access",
+        "description": "Initialize local grants and owner-only management APIs. Guest access remains disabled; no device-control endpoint is exposed."
+      }
+    },
+    "error": {
+      "storage_unavailable": "Local storage could not be initialized. Check storage health and try again."
+    },
+    "abort": {
+      "owner_required": "An authenticated, active Home Assistant owner must perform setup.",
+      "already_configured": "SOLBUDDY Access is already configured.",
+      "invalid_input": "Unexpected setup fields were supplied."
+    }
+  }
+}
