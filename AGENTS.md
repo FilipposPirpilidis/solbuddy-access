@@ -2,12 +2,12 @@
 
 ## Current scope
 
-The user approved implementing local HTTP guest credentials/commands alongside remote HTTPS. Preserve default-off guest access and add a separate explicit local HTTP opt-in with exact origin and private client CIDRs. Support direct HTTPS and a single proxy hop trusted by both HA and SOLBUDDY. Keep all guest authentication, grants, revocation, replay protection, audit and device checks intact. Wallet/coin requirements, deployment, and production configuration changes are outside this request. The user authorized committing and pushing this transport update to https://github.com/FilipposPirpilidis/solbuddy-access, keeping guest access and local HTTP disabled by default. Update documentation and tests for the expanded transport scope.
+The user approved wallet implementation for Phantom, Solflare, and Trust: owner-approved immutable wallet bindings, the exact Solana mainnet SBUD mint, a US$2 minimum at issuance/renewal, and rejection of stale prices. Include owner/guest UI and tests. Wallet and guest access must remain default-off. Include the automatic local-network detection work. The user authorized committing and pushing both features to FilipposPirpilidis/solbuddy-access. Production configuration, purchases, transactions, staking, and deployment remain outside scope. See docs/wallet-implementation-plan.md for the approved direction.
 
 ## Architecture
 
 - Domain: `solbuddy_access`; package: `custom_components/solbuddy_access/`.
-- Local, self-hosted, privacy-first; no required cloud, wallet, token, or blockchain service.
+- Local, self-hosted, privacy-first. Ordinary grants need no cloud or blockchain service; optional wallet grants require mainnet RPC and fresh Jupiter pricing. Keep both access flags default-off.
 - Use a single UI-created config entry and typed runtime data. Use native versioned `Store` persistence with explicit atomic writes and awaited security-critical saves.
 - Separate models, storage, grant lifecycle, authentication, policy evaluation, and HA device execution. All transports call the same application service.
 - Do not use a polling coordinator for local grant state. Use lifecycle timers for notifications and authoritative request-time expiration checks.
@@ -24,7 +24,7 @@ The user approved implementing local HTTP guest credentials/commands alongside r
 - Use strict schemas; reject unknown fields, booleans masquerading as numbers, nonfinite values, and out-of-range values. Do not silently clamp.
 - Never log tokens, invitations, headers, raw request bodies, wallet secrets, HA credentials, or guest identifiers. Do not persist plaintext guest credentials.
 - Fail closed on corrupted storage, migration failure, uncertain identity/capabilities, audit admission failure, or clock integrity failure. Revocation remains allowed during faults.
-- No cryptography invented here. Future identity adapters authenticate a principal; local policy remains authoritative.
+- No cryptography invented here. Wallet signatures authenticate a principal; local policy remains authoritative.
 
 ## Coding and development
 
@@ -35,7 +35,7 @@ The user approved implementing local HTTP guest credentials/commands alongside r
 - Store only light policies; climate remains denied until Phase 4. There is no WebSocket execute command or integration HA service. Guest execution requires a server-bound, live session rechecked at final dispatch.
 - Invitations and sessions use distinct 256-bit random credentials and only SHA-256 digests in volatile memory. Invalidate on revocation, replacement, restart, reload, and disabling access. Never persist credentials.
 - Use an owner-authenticated HTTP invitation endpoint, not a secret-bearing WebSocket response: the pinned HA WebSocket debug logger logs outgoing message bodies.
-- Require exact configured origin/Host, no cross-origin access, bounded input, and serialized sequences. Local HTTP requires explicit private CIDRs and must reject all known proxy peers. Proxied HTTPS requires an exact configured peer, HA trust, single-client forwarding, and HA-validated scheme/remote; never trust arbitrary forwarded headers. Reject HA Cloud requests and multi-hop chains until separately reviewed.
+- Require exact configured origin/Host, no cross-origin access, bounded input, and serialized sequences. Local HTTP requires membership in a private network detected from HA-enabled adapters; exclude loopback/link-local/public networks, fail closed on detection failure, and retain legacy restrictions until owner save. It must reject all known proxy peers. Proxied HTTPS requires an exact configured peer, HA trust, single-client forwarding, and HA-validated scheme/remote; never trust arbitrary forwarded headers. Reject HA Cloud requests and multi-hop chains until separately reviewed.
 - Use the selected GitHub repository's README as the documentation URL. Report the exact validation performed; do not equate a manifest-only check with the full hassfest suite.
 - Enrollment must resolve registry/config-entry/device identity server-side and verify an explicitly reviewed physical light implementation. Never accept registry IDs or trusted-device flags from API input.
 - Do not block the event loop. Use HA lifecycle helpers and unload callbacks; clean up timers and in-memory sessions.
@@ -44,7 +44,7 @@ The user approved implementing local HTTP guest credentials/commands alongside r
 - Keep protocol and storage schema versions explicit. Migrations must never widen permissions or erase revocations.
 - Document behavior, limitations, and validation evidence. Do not claim checks passed unless run. Use synthetic data only in examples and fixtures.
 - Never commit credentials or local HA storage. Do not expose a remote endpoint, publish, or deploy as part of local development without authorization.
-- Solana, tokens, custom panels, and smart-lock workflows require separate future scope; do not implement them speculatively.
+- Solana wallet approval and SBUD eligibility UI are now authorized. Smart-lock workflows, payments, staking, and climate support remain outside scope.
 
 ## Phase 3 validation baseline
 
@@ -53,3 +53,11 @@ On 2026-10-19, the full suite passed 191 tests with 92% integration coverage; Ru
 ## Dual-transport validation baseline
 
 Local HTTP / single-hop proxy HTTPS follow-up: 229 tests passed with 92% integration coverage, plus Ruff and manifest-only validation. See `docs/transports.md` for owner setup, exact proxy header contract, plaintext limitations, and unsupported multi-hop/Cloud transports. Guest access and local HTTP remain default-off.
+
+## Automatic network detection validation
+
+Version 0.1.0.dev5: full regression suite passed 235 tests; the additional options error/removed-field test also passed (236 total). Ruff, locked dependency sync, manifest-only validation, and translation parity passed. Network detection uses HA adapter state and preserves existing manual restrictions until the owner saves options.
+
+## Wallet implementation validation
+
+Version 0.1.0.dev6: 287 Python tests passed with 91% integration coverage; seven Node wallet-connector tests passed for Phantom, Solflare and Trust. Ruff, locked offline dependency sync, JS syntax checking, English translation parity, and the official HA 2026.10.2 manifest-only validator passed. A read-only public RPC call verified the full mainnet genesis hash. Tests cover real Ed25519 signatures, HTTPS owner/guest flows and renewal, alternate-path denial, replay/revocation races, exact US$2 arithmetic, stale/future prices, provider errors, and HA `!secret` loading. See docs/wallet-access.md for setup and limits. Actual extensions, mobile browsers, live qualifying holdings, and physical devices still need manual validation; mobile QR/deep links are not implemented. Access stays default-off; no push or deployment occurred.

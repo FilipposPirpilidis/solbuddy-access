@@ -13,7 +13,7 @@ from .auth import AuthError, GuestAccessDisabled
 from .grants import AccessDenied
 from .models import ValidationError
 from .storage import StorageUnavailable
-from .transport import TransportPolicy
+from .transport import TransportPolicy, async_transport_policy
 
 BASE = "/api/solbuddy_access/v1"
 HEADERS = {
@@ -89,7 +89,7 @@ class GuestView(HomeAssistantView):
         self.operation = operation
         self.url = f"{BASE}/{operation}"
         self.name = "api:solbuddy_access:" + operation.replace("/", ":")
-        if operation == "invitations":
+        if operation == "invitations" or operation == "wallet/owner":
             self.requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
@@ -107,11 +107,107 @@ class GuestView(HomeAssistantView):
             policy = runtime.transport_policy or TransportPolicy(
                 https_origin=runtime.guest_origin
             )
+            if runtime.transport_options is not None:
+                policy = await async_transport_policy(
+                    self.hass, runtime.transport_options
+                )
             source = policy.check(request, self.hass.http.trusted_proxies)
             auth.limit_source(source)
             expected = "GET" if self.operation == "permissions" else "POST"
             if request.method != expected:
                 raise AuthError(405, "method_not_allowed")
+            if self.operation.startswith("wallet/"):
+                # Wallet proof, renewal, and owner approval require HTTPS even
+                # when ordinary guest commands explicitly permit local HTTP.
+                if not auth.wallet_enabled:
+                    raise AuthError(404, "not_found")
+                TransportPolicy(
+                    https_origin=policy.https_origin, proxy_ips=policy.proxy_ips
+                ).check(request, self.hass.http.trusted_proxies)
+                if self.operation == "wallet/owner":
+                    user = request.get("hass_user")
+                    if user is None:
+                        raise AuthError()
+                    await runtime.manager.require_owner(user.id)
+                    data = await body(request)
+                    if (
+                        set(data) != {"operation", "payload"}
+                        or type(data["payload"]) is not dict
+                    ):
+                        raise AuthError(400, "invalid_request")
+                    payload = data["payload"]
+                    if data["operation"] == "create":
+                        if not payload.get("wallet_address"):
+                            raise AuthError(400, "wallet_required")
+                        return response(
+                            runtime.manager.describe(
+                                await runtime.manager.create(user.id, payload)
+                            )
+                        )
+                    if data["operation"] == "list" and not payload:
+                        return response(
+                            {
+                                "grants": [
+                                    runtime.manager.describe(g)
+                                    for g in runtime.storage.grants
+                                    if g.wallet_address
+                                ]
+                            }
+                        )
+                    if data["operation"] == "revoke" and set(payload) == {"grant_id"}:
+                        return response(
+                            await runtime.manager.revoke(user.id, payload["grant_id"])
+                        )
+                    raise AuthError(400, "invalid_request")
+                renewal = self.operation in {"wallet/renew-challenge", "wallet/renew"}
+                if not renewal:
+                    item = auth._lookup(
+                        credential(request, "SolbuddyInvite"),
+                        "sbai_",
+                        auth._invitations,
+                    )
+                    if item.busy:
+                        raise AuthError(409, "request_in_progress")
+                    item.limiter.take()
+                    item.busy = True
+                    try:
+                        data = await body(request)
+                        if self.operation == "wallet/challenge" and not data:
+                            return response(
+                                auth.challenge(item, policy.https_origin, renewal=False)
+                            )
+                        if self.operation == "wallet/verify" and set(data) == {
+                            "signature"
+                        }:
+                            return response(
+                                await auth.wallet_verify(
+                                    item,
+                                    policy.https_origin,
+                                    data["signature"],
+                                    renewal=False,
+                                )
+                            )
+                        raise AuthError(400, "invalid_request")
+                    finally:
+                        item.busy = False
+                async with auth.request(
+                    credential(request, "SolbuddySession"), sequence(request)
+                ) as item:
+                    data = await body(request)
+                    if self.operation == "wallet/renew-challenge" and not data:
+                        return response(
+                            auth.challenge(item, policy.https_origin, renewal=True)
+                        )
+                    if self.operation == "wallet/renew" and set(data) == {"signature"}:
+                        return response(
+                            await auth.wallet_verify(
+                                item,
+                                policy.https_origin,
+                                data["signature"],
+                                renewal=True,
+                            )
+                        )
+                    raise AuthError(400, "invalid_request")
             if self.operation == "invitations":
                 user = request.get("hass_user")
                 if user is None:
@@ -201,6 +297,14 @@ def register(hass: HomeAssistant) -> None:
         "permissions",
         "check",
         "execute",
+        "wallet/owner",
+        "wallet/challenge",
+        "wallet/verify",
+        "wallet/renew-challenge",
+        "wallet/renew",
     ):
         hass.http.register_view(GuestView(hass, operation))
+    from .wallet_ui import register_ui
+
+    register_ui(hass)
     hass.data["solbuddy_access_guest_registered"] = True

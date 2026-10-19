@@ -72,3 +72,7 @@ Grants cannot be extended or edited in v0.1. Revoke and replace them. Empty acti
 ## Ephemeral authentication state
 
 A session contains a random session ID, credential digest, grant ID, issuance time, expiry, monotonic deadline, next request sequence, and in-flight marker. Session expiry is the earlier of 15 minutes from issue or grant expiry. Invitations and sessions exist only in memory; no refresh token is persisted. All are invalid after restart/unload. See [authentication proposal](api.md) for issuance and renewal.
+
+## Wallet policy records
+
+Wallet grants use per-record schema 3, adding a canonical `wallet_address` and the fixed `wallet_policy` identifier `solana-mainnet-sbud-usd2-v1`. This selects exact mainnet SBUD Token-2022 holdings and the US$2 fresh-price policy. Unknown policies are rejected. Existing schema 1/2 grants retain ordinary invitation-only behavior; no migration silently adds wallet access or changes revocations. Wallet bindings cannot be edited. All challenges, signatures and usable credentials are volatile; only the owner-approved wallet binding is persisted. See [wallet access](wallet-access.md).

@@ -16,7 +16,7 @@ from . import const
 from .auth import AuthError
 from .const import DOMAIN
 from .storage import GrantStorage, StorageUnavailable
-from .transport import TransportPolicy
+from .transport import LocalNetworkUnavailable, TransportPolicy, async_transport_policy
 
 
 class SolbuddyConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -77,12 +77,20 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
         errors = {}
         if user_input is not None:
             try:
-                policy = TransportPolicy.from_options(user_input)
+                policy = await async_transport_policy(
+                    self.hass, user_input, require_local=True
+                )
                 enabled = user_input.get("guest_enabled", False)
                 if enabled:
                     if not const.GUEST_TRANSPORT_VERIFIED:
                         return self.async_abort(reason="security_gate_closed")
                     policy.check(request, self.hass.http.trusted_proxies)
+                    if user_input.get("wallet_enabled", False):
+                        TransportPolicy(
+                            https_origin=policy.https_origin, proxy_ips=policy.proxy_ips
+                        ).check(request, self.hass.http.trusted_proxies)
+            except LocalNetworkUnavailable:
+                errors["base"] = "local_network_unavailable"
             except ValueError, AuthError:
                 errors["base"] = "invalid_https_origin"
             else:
@@ -90,12 +98,11 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
                     title="",
                     data={
                         "guest_enabled": enabled,
+                        "wallet_enabled": enabled
+                        and user_input.get("wallet_enabled", False),
                         "guest_origin": policy.https_origin,
                         "local_http_enabled": bool(policy.local_origin),
                         "local_http_origin": policy.local_origin,
-                        "local_http_networks": ", ".join(
-                            map(str, policy.local_networks)
-                        ),
                         "https_proxy_ips": ", ".join(map(str, policy.proxy_ips)),
                     },
                 )
@@ -107,6 +114,10 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
                     vol.Required(
                         "guest_enabled",
                         default=self.config_entry.options.get("guest_enabled", False),
+                    ): bool,
+                    vol.Required(
+                        "wallet_enabled",
+                        default=self.config_entry.options.get("wallet_enabled", False),
                     ): bool,
                     vol.Optional(
                         "guest_origin",
@@ -121,12 +132,6 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
                     vol.Optional(
                         "local_http_origin",
                         default=self.config_entry.options.get("local_http_origin", ""),
-                    ): str,
-                    vol.Optional(
-                        "local_http_networks",
-                        default=self.config_entry.options.get(
-                            "local_http_networks", ""
-                        ),
                     ): str,
                     vol.Optional(
                         "https_proxy_ips",

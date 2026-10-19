@@ -232,3 +232,119 @@ def test_cloud_request_cannot_use_local_exception():
             TransportPolicy.from_options(options()).check(request())
     finally:
         remote.is_cloud_request.reset(token)
+
+
+def adapter(address="192.168.68.10", prefix=24, enabled=True):
+    return {
+        "enabled": enabled,
+        "ipv4": [{"address": address, "network_prefix": prefix}],
+        "ipv6": [],
+    }
+
+
+def test_detect_enabled_private_networks_with_actual_prefixes():
+    from custom_components.solbuddy_access.transport import adapter_networks
+
+    adapters = [
+        adapter(prefix=23),
+        adapter("10.10.2.3", 16),
+        adapter(enabled=False),
+        adapter("8.8.8.8"),
+        adapter("127.0.0.1", 8),
+        adapter("169.254.1.1", 16),
+        adapter("192.168.68.10", 0),
+        adapter("garbage"),
+        adapter(prefix=True),
+        {
+            "enabled": True,
+            "ipv6": [
+                {"address": "fd12::5", "network_prefix": 64},
+                {"address": "fe80::1", "network_prefix": 64},
+            ],
+        },
+    ]
+    assert set(adapter_networks(adapters)) == {
+        ip_network("192.168.68.0/23"),
+        ip_network("10.10.0.0/16"),
+        ip_network("fd12::/64"),
+    }
+
+
+async def test_detection_failure_blocks_local_but_keeps_https(hass, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from custom_components.solbuddy_access.transport import (
+        LocalNetworkUnavailable,
+        async_transport_policy,
+    )
+
+    monkeypatch.setattr(
+        "custom_components.solbuddy_access.transport.async_get_adapters",
+        AsyncMock(side_effect=OSError),
+    )
+    config = options()
+    config.pop("local_http_networks")
+    policy = await async_transport_policy(hass, config)
+    with pytest.raises(AuthError):
+        policy.check(request())
+    assert policy.check(request(host="remote.example", tls=True))
+    with pytest.raises(LocalNetworkUnavailable):
+        await async_transport_policy(hass, config, require_local=True)
+
+
+async def test_legacy_networks_never_widen_on_upgrade(hass, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from custom_components.solbuddy_access.transport import async_transport_policy
+
+    monkeypatch.setattr(
+        "custom_components.solbuddy_access.transport.async_get_adapters",
+        AsyncMock(return_value=[adapter(prefix=16), adapter("10.1.2.3", 24)]),
+    )
+    policy = await async_transport_policy(hass, options())
+    assert policy.local_networks == (ip_network("192.168.68.0/24"),)
+    assert policy.check(request())
+    with pytest.raises(AuthError):
+        policy.check(request(peer="10.1.2.5"))
+
+
+async def test_current_adapter_state_used_on_every_request(
+    transport_client, hass, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    client, forwarded, runtime = transport_client
+    get_adapters = AsyncMock(return_value=[adapter()])
+    monkeypatch.setattr(
+        "custom_components.solbuddy_access.transport.async_get_adapters", get_adapters
+    )
+    config = options(
+        local_http_origin=str(client.make_url("/")).rstrip("/"),
+        https_proxy_ips="127.0.0.1" if forwarded else "",
+    )
+    config.pop("local_http_networks")
+    runtime.transport_options = config
+    # Real loopback clients must not become local just because HA has a LAN.
+    result = await client.post(BASE + "/session", headers=forwarded, json={})
+    assert result.status == (401 if forwarded else 403)
+    get_adapters.return_value = []
+    result = await client.post(BASE + "/session", headers=forwarded, json={})
+    assert result.status == (401 if forwarded else 403)
+    assert get_adapters.await_count == 2
+
+
+async def test_network_changes_remove_old_allowance(hass, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from custom_components.solbuddy_access.transport import async_transport_policy
+
+    get_adapters = AsyncMock(return_value=[adapter()])
+    monkeypatch.setattr(
+        "custom_components.solbuddy_access.transport.async_get_adapters", get_adapters
+    )
+    config = options()
+    config.pop("local_http_networks")
+    assert (await async_transport_policy(hass, config)).check(request())
+    get_adapters.return_value = [adapter(enabled=False)]
+    with pytest.raises(AuthError):
+        (await async_transport_policy(hass, config)).check(request())

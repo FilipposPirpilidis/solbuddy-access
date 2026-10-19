@@ -44,6 +44,8 @@ def _handler(operation: str):
             payload = message["payload"]
             if len(json.dumps(payload).encode()) > 8192:
                 raise ValidationError("Payload too large")
+            if "wallet_address" in payload:
+                raise ValidationError("Use owner wallet HTTP API")
             if operation == "create":
                 result = manager.describe(await manager.create(owner_id, payload))
             elif operation == "list":
@@ -85,6 +87,10 @@ def _handler(operation: str):
                     {k: v for k, v in payload.items() if k != "grant_id"},
                 )
                 result = {"allowed": decision.allowed, "reason": decision.reason}
+            if type(result) is dict:
+                result.pop("wallet_address", None)
+                if type(result.get("grant")) is dict:
+                    result["grant"].pop("wallet_address", None)
             connection.send_result(message["id"], result)
         except AccessDenied:
             connection.send_error(

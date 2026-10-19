@@ -1,4 +1,4 @@
-# Local HTTP and remote HTTPS (0.1.0.dev4)
+# Local HTTP and remote HTTPS (0.1.0.dev5)
 
 This update supports guest invitations, sessions, and commands over an explicitly enabled local HTTP connection and remote HTTPS simultaneously. Guest access and local HTTP both default off. Existing HTTPS-only settings remain HTTPS-only after upgrade. Wallet and coin eligibility are not implemented.
 
@@ -6,7 +6,7 @@ This update supports guest invitations, sessions, and commands over an explicitl
 
 Replace the installed `custom_components/solbuddy_access` folder with this version and restart Home Assistant. Keep your `configuration.yaml` unchanged if your HTTPS proxy already works with HA. As the HA owner, open Settings → Devices & services → SOLBUDDY Access → Configure (options).
 
-For example, if HA itself is at `http://192.168.68.10:8123`, local clients are on `192.168.68.0/24`, and the HTTPS proxy is `192.168.68.112`, use:
+For example, if HA itself is at `http://192.168.68.10:8123` and the HTTPS proxy is `192.168.68.112`, use:
 
 | Option | Example |
 | --- | --- |
@@ -14,10 +14,13 @@ For example, if HA itself is at `http://192.168.68.10:8123`, local clients are o
 | HTTPS origin | `https://ha.example.com` — your real remote address, no path |
 | Allow unencrypted local HTTP | On |
 | Local HTTP origin | `http://192.168.68.10:8123` — your actual HA address |
-| Allowed local client subnets | `192.168.68.0/24` |
 | HTTPS proxy IP addresses | `192.168.68.112` |
 
-The HA address above is illustrative; do not enter it unless it is your HA server's actual address. The local subnet specifies **client source addresses**, not devices granted control. Use exact network CIDRs, separated by commas. Only RFC1918 IPv4, IPv6 ULA, and loopback networks are accepted; no public ranges, wildcard networks, or automatic LAN detection. Origin hostnames and IPv4 literals are supported; IPv6 origin literals remain unsupported.
+The HA address above is illustrative; use your actual HA address, such as `http://homeassistant.local:8123`. You no longer enter a subnet. SOLBUDDY uses the addresses and real subnet prefixes of **enabled Home Assistant network adapters**. Only RFC1918 IPv4 and IPv6 ULA networks are eligible; public, link-local, loopback, and disabled interfaces are excluded. No guessed `/24`, hostname-based trust, or allow-all fallback is used. Origin hostnames and IPv4 literals are supported; IPv6 origin literals remain unsupported.
+
+If HA reports no eligible network, saving enabled local HTTP settings shows an error. At runtime, missing network information blocks local HTTP while configured HTTPS continues working. Check HA's Settings → System → Network selection. With a container, HA must see the LAN interface (a bridge-only container may expose only its container subnet). SOLBUDDY consults HA's current adapter state on each request; restart HA after OS address/prefix changes that HA has not refreshed.
+
+On upgrade, any previously saved manual subnet list remains an additional restriction intersected with detected networks. Saving the new options removes that legacy restriction and adopts automatic detection. Existing HTTPS-only installations remain HTTPS-only.
 
 For local-only use, leave HTTPS origin and HTTPS proxy IP addresses empty. For direct HTTPS, leave the proxy IP addresses empty. Submit options from a connection allowed by the new settings. Disabling all guest access remains possible from any authenticated owner connection. Saving options reloads the integration and invalidates all invitations and sessions.
 
@@ -52,6 +55,11 @@ Paste the invitation into its hidden prompt. HTTPS still verifies certificates, 
 
 ## Verification
 
-Tests cover explicit local CIDRs, outside/public sources, proxy peers attempting local fallback, untrusted and spoofed forwarding, downgrade and chain rejection, exact origin/Host checks, HA cloud transport exclusion, owner local configuration, and real HA HTTP middleware invitation → session → light execution for both local HTTP and forwarded HTTPS. Existing verified direct-TLS and all grant/session tests remain in the suite. Device fixtures are synthetic; no production HA instance or physical light was changed.
+Tests cover automatic private-adapter detection and legacy subnet restrictions, outside/public sources, proxy peers attempting local fallback, untrusted and spoofed forwarding, downgrade and chain rejection, exact origin/Host checks, HA cloud transport exclusion, owner local configuration, and real HA HTTP middleware invitation → session → light execution for both local HTTP and forwarded HTTPS. Existing verified direct-TLS and all grant/session tests remain in the suite. Device fixtures are synthetic; no production HA instance or physical light was changed.
 
 Validation on Python 3.14.2 / HA 2026.10.2: **229 tests passed**, **92%** integration statement coverage; Ruff check/format and the official HA manifest-only validator passed. Full hassfest and testing on real hardware remain release checks.
+
+
+Automatic detection follow-up: the manual subnet field has been removed from options and translations. Tests cover actual prefixes, multiple enabled adapters, public/link-local/loopback exclusion, disabled interfaces, detection failure, changed HA adapter state, options errors, and preserving legacy restrictions until owner save.
+
+Validation for 0.1.0.dev5: 235 full-suite tests plus the additional options error/removed-field test passed (236 total). Ruff, locked dependency sync, manifest-only validation, and translation parity passed.

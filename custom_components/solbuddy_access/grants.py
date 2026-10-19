@@ -37,6 +37,7 @@ class GrantManager:
         self.audit = audit
         self.executor = executor
         self.active = True
+        self.wallet_enabled = False
         self._locks = {g.grant_id: asyncio.Lock() for g in storage.grants}
         self._waiting: dict[str, int] = {}
         self._revoking: set[str] = set()
@@ -102,6 +103,7 @@ class GrantManager:
         if set(data) - {
             "guest_display_name",
             "guest_identifier",
+            "wallet_address",
             "starts_at",
             "expires_at",
             "policies",
@@ -111,6 +113,8 @@ class GrantManager:
             data
         ):
             raise ValidationError("Missing grant fields")
+        if data.get("wallet_address") is not None and not self.wallet_enabled:
+            raise AccessDenied("wallet_access_disabled")
         # The first milestone deliberately grants exactly one reviewed light.
         if type(data["policies"]) is not list or len(data["policies"]) != 1:
             raise ValidationError("Exactly one light is required")
@@ -119,6 +123,7 @@ class GrantManager:
             grant = Grant.create(
                 guest_display_name=data["guest_display_name"],
                 guest_identifier=data.get("guest_identifier"),
+                wallet_address=data.get("wallet_address"),
                 created_by=owner_id,
                 now=self.now(),
                 starts_at=parse_time(data["starts_at"]),

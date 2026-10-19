@@ -18,7 +18,7 @@ Server-owned fields are forbidden in input. No administrative command accepts an
 
 ## Local guest authentication
 
-Use random capability credentials rather than passwords or HA tokens. Phase 3 implements and tests this lifecycle. TLS is the default; local HTTP requires a separate owner opt-in and explicit private client CIDRs. The current transport supports direct HTTPS, explicitly trusted single-hop proxy HTTPS, and opt-in local HTTP. See [transport configuration and trust boundaries](transports.md). No port forwarding or public deployment is part of v0.1 setup.
+Use random capability credentials rather than passwords or HA tokens. Phase 3 implements and tests this lifecycle. TLS is the default; local HTTP requires a separate owner opt-in and automatically detected private HA adapter networks. The current transport supports direct HTTPS, explicitly trusted single-hop proxy HTTPS, and opt-in local HTTP. See [transport configuration and trust boundaries](transports.md). No port forwarding or public deployment is part of v0.1 setup.
 
 1. The authenticated owner creates a random 256-bit invitation for one currently active grant, expiring in five minutes. Only its SHA-256 digest is held in memory. The owner transfers it through a trusted channel; no URLs, QR query parameters, logs, or browser history contain the credential.
 2. The guest presents the invitation in an authorization header to `POST /api/solbuddy_access/v1/session`. This is credential authentication, not an anonymous session-creation endpoint. Atomically consume the invitation under the grant gate. Recheck grant activity and storage health. Return a fresh random 256-bit opaque session token once with `Cache-Control: no-store`.
@@ -57,3 +57,21 @@ Consume sequences even on denied actions; do not replay on timeout. Return a bou
 ## Enablement gate
 
 Before guest routes exist, test authentication, expiry, rotation, cross-grant isolation, replay races, TLS/proxy assumptions, header redaction, size/rate limits, and absence of any unauthenticated path using actual HA HTTP fixtures. Test that SOLBUDDY credentials fail on HA's ordinary API and HA credentials are not silently accepted as guest credentials. Document and review the complete credential lifecycle and client storage before enabling control. The Phase 3 authentication, TLS, and owner-options tests passed before the source registration gate was opened. Runtime guest access still defaults off; fresh installations register no guest routes until the owner opts in. See [validation and limitations](phase-3.md).
+
+## Optional wallet grants (0.1.0.dev6)
+
+See [wallet setup](wallet-access.md). All `/wallet/*` routes require explicitly enabled guest **and** wallet access and the configured HTTPS transport. Wallet public keys are managed over HTTP, not WebSocket, to avoid HA's WebSocket debug response logging. WebSocket creation rejects `wallet_address`; WebSocket reads redact that field.
+
+| POST path under `/api/solbuddy_access/v1` | Authentication | JSON body |
+| --- | --- | --- |
+| `/wallet/owner` | Native HA owner bearer | `{"operation":"create","payload":{...}}`, `{"operation":"list","payload":{}}`, or `{"operation":"revoke","payload":{"grant_id":"..."}}` |
+| `/wallet/challenge` | `SolbuddyInvite <invitation>` | `{}` |
+| `/wallet/verify` | Same invitation | `{"signature":"<canonical base64 of 64-byte Ed25519 signature>"}` |
+| `/wallet/renew-challenge` | `SolbuddySession <session>` and next sequence | `{}` |
+| `/wallet/renew` | Same session and next sequence | `{"signature":"<canonical base64>"}` |
+
+Create payload is the normal immutable light grant payload plus the owner-approved `wallet_address`. The fixed wallet policy cannot be overridden. Each challenge returns `message`, `wallet_address`, and `expires_at`; sign the exact UTF-8 message. The server stores and verifies those bytes, not client-supplied challenge fields. Successful verification returns the normal session response with sequence reset to 1. Renewal challenge and verification each consume a sequence. Prices, balances and authorization decisions are never accepted from clients.
+
+`/session` and `/session/renew` reject wallet grants with `wallet_proof_required`. Successful wallet sessions use the existing `/permissions`, `/check`, and `/execute` protocol, including explicitly enabled local HTTP command transport. Wallet proof itself remains HTTPS-only. Errors include `invalid_wallet_proof`, `eligibility_stale`, `eligibility_unavailable`, and `insufficient_sbud`. Failure does not extend a session; uncertain device commands must not be retried blindly.
+
+GET `/wallet/owner-ui` and `/wallet/ui` serve standalone bundled pages only when enabled and accessed through HTTPS. The owner page shell is public but its data and mutations require a current HA owner bearer. Assets contain no secrets and use no-store and restrictive CSP headers.

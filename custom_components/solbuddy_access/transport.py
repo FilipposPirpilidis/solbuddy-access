@@ -2,11 +2,13 @@
 
 import re
 from dataclasses import dataclass
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_address, ip_interface, ip_network
 from urllib.parse import urlsplit
 
 from aiohttp import web
 from hass_nabucasa import remote
+from homeassistant.components.network import async_get_adapters
+from homeassistant.exceptions import HomeAssistantError
 
 from .auth import AuthError
 
@@ -25,6 +27,7 @@ LOCAL_RANGES = tuple(
 )
 FIELDS = {
     "guest_enabled",
+    "wallet_enabled",
     "guest_origin",
     "local_http_enabled",
     "local_http_origin",
@@ -69,31 +72,48 @@ class TransportPolicy:
     proxy_ips: tuple = ()
 
     @classmethod
-    def from_options(cls, options) -> TransportPolicy:
+    def from_options(
+        cls, options, *, detected_networks: tuple | None = None
+    ) -> TransportPolicy:
         if set(options) - FIELDS:
             raise ValueError("Unexpected options")
-        for key in ("guest_enabled", "local_http_enabled"):
+        for key in ("guest_enabled", "local_http_enabled", "wallet_enabled"):
             if type(options.get(key, False)) is not bool:
                 raise ValueError("Invalid enablement")
         if not options.get("guest_enabled", False):
             return cls()
         https = options.get("guest_origin", "")
         https = validate_origin(https) if https else ""
+        if options.get("wallet_enabled", False) and not https:
+            raise ValueError("Wallet access requires HTTPS")
         local, networks = "", ()
         if options.get("local_http_enabled", False):
             local = validate_origin(options.get("local_http_origin"), "http")
-            networks = tuple(
-                ip_network(item, strict=True)
-                for item in _items(options.get("local_http_networks", ""))
-            )
-            if not networks or any(
-                not any(
-                    n.version == allowed.version and n.subnet_of(allowed)
-                    for allowed in LOCAL_RANGES
+            if "local_http_networks" in options:
+                # Legacy settings remain an upper bound until the owner saves options.
+                networks = tuple(
+                    ip_network(item, strict=True)
+                    for item in _items(options["local_http_networks"])
                 )
-                for n in networks
-            ):
-                raise ValueError("Explicit private local networks required")
+                if not networks or any(
+                    not any(
+                        n.version == allowed.version and n.subnet_of(allowed)
+                        for allowed in LOCAL_RANGES
+                    )
+                    for n in networks
+                ):
+                    raise ValueError("Invalid legacy local networks")
+                if detected_networks is not None:
+                    networks = tuple(
+                        set(
+                            n if n.subnet_of(old) else old
+                            for n in detected_networks
+                            for old in networks
+                            if n.version == old.version and n.overlaps(old)
+                        )
+                    )
+            else:
+                networks = detected_networks or ()
         proxies = tuple(
             ip_address(item) for item in _items(options.get("https_proxy_ips", ""))
         )
@@ -177,3 +197,53 @@ class TransportPolicy:
         if request.query_string:
             raise AuthError(400, "query_not_allowed")
         return source
+
+
+class LocalNetworkUnavailable(ValueError):
+    """HA exposes no usable enabled private adapter network."""
+
+
+def adapter_networks(adapters: list) -> tuple:
+    """Use HA-enabled interfaces and their real prefixes; never guess a /24."""
+    networks = set()
+    for adapter in adapters:
+        if adapter.get("enabled") is not True:
+            continue
+        for info in (*adapter.get("ipv4", []), *adapter.get("ipv6", [])):
+            try:
+                address, prefix = info["address"], info["network_prefix"]
+                if type(prefix) is not int or type(address) is not str:
+                    continue
+                interface = ip_interface(f"{address}/{prefix}")
+                network = interface.network
+                if interface.ip.is_loopback or interface.ip.is_link_local:
+                    continue
+                if any(
+                    network.version == allowed.version and network.subnet_of(allowed)
+                    for allowed in LOCAL_RANGES
+                ):
+                    networks.add(network)
+            except ValueError, KeyError, TypeError:
+                continue
+    return tuple(
+        sorted(networks, key=lambda n: (n.version, int(n.network_address), n.prefixlen))
+    )
+
+
+async def async_transport_policy(
+    hass, options, *, require_local: bool = False
+) -> TransportPolicy:
+    """Refresh from HA's adapter state; detection failure disables local HTTP only."""
+    networks = ()
+    if (
+        options.get("guest_enabled") is True
+        and options.get("local_http_enabled") is True
+    ):
+        try:
+            networks = adapter_networks(await async_get_adapters(hass))
+        except HomeAssistantError, OSError, ValueError, TypeError, KeyError:
+            networks = ()
+    policy = TransportPolicy.from_options(options, detected_networks=networks)
+    if policy.local_origin and not policy.local_networks and require_local:
+        raise LocalNetworkUnavailable("No private HA network detected")
+    return policy

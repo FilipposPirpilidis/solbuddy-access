@@ -59,3 +59,13 @@ Pure policy unit tests must assert deny reasons. Integration tests must addition
 ## Future lock boundary
 
 Locks remain unconditionally ineligible in v0.1, including through future wallet identity. A later lock feature would require an independently reviewed authorization type, explicit homeowner approval, strong reauthentication, a separate short lifetime, revocation, and comprehensive auditing. Ordinary light/climate grants can never be upgraded implicitly into lock permissions.
+
+## Optional wallet authentication
+
+Wallet access defaults off independently of the guest transport. Owner approval, a grant-scoped invitation, a fresh one-time Ed25519 proof, finalized exact-mint holdings, and fresh server-side USD valuation are all required. HTTPS is mandatory for wallet administration and proof. Grant schema 3 pins the wallet and policy; ordinary session exchange/renewal cannot authenticate a wallet grant. Revoke-and-replace is required to change wallets.
+
+Provider responses are bounded, redirects denied, and the entire eligibility operation timed out. RPC genesis, Token-2022 ownership, mint properties, account ownership, integer balances and source timestamps are validated. Price observations older than 300 seconds and balance snapshots older than 60 seconds are rejected, including a freshly retrieved stale price. No secondary-price fallback exists. Decimal arithmetic preserves the exact US$2 threshold. The configured RPC and Jupiter remain trusted external data sources; this is not a manipulation-resistant independent price oracle for a thin market.
+
+External IO does not hold the grant revocation gate. Before session issuance, recheck credential identity, grant validity, storage/audit health, challenge deadline, and evidence age, including after awaited audit admission. Proof is reserved before external IO; concurrent replay cannot create a second session. Failed renewal does not extend the existing credential. Balance transfers are only detected at renewal; existing sessions may remain usable for up to 15 minutes. Owner revocation remains immediate at subsequent authorization.
+
+Bundled pages avoid browser storage, URL credentials, CDN code and iframe embedding. Owner HTTP APIs re-resolve current ownership. Provider credentials stay server-side with optional HA `!secret` configuration. Third-party RPC observes queried public wallets. Signature and balance test fixtures are synthetic. Manual testing of actual wallets and devices remains a release requirement; mobile QR/deep-link connection is not implemented. See [setup and limits](wallet-access.md).

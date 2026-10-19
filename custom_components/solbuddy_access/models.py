@@ -11,6 +11,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from .const import MAX_DURATION_DAYS, MAX_ENTITIES
+from .wallet_identity import WALLET_POLICY, public_key
 
 
 class ValidationError(ValueError):
@@ -160,6 +161,7 @@ class Grant:
     guest_identifier: str | None = None
     revoked_at: datetime | None = None
     revoked_by: str | None = None
+    wallet_address: str | None = None
 
     def __post_init__(self) -> None:
         require_text(self.grant_id)
@@ -169,6 +171,11 @@ class Grant:
             raise ValidationError("Invalid grant ID") from err
         if identifier.version != 4 or str(identifier) != self.grant_id:
             raise ValidationError("Canonical UUID4 required")
+        if self.wallet_address is not None:
+            try:
+                public_key(self.wallet_address)
+            except ValueError:
+                raise ValidationError("Invalid wallet address") from None
         require_text(self.guest_display_name, 100)
         require_text(self.created_by)
         if self.guest_identifier is not None:
@@ -216,6 +223,7 @@ class Grant:
         expires_at: datetime,
         policies: tuple[LightPolicy, ...],
         guest_identifier: str | None = None,
+        wallet_address: str | None = None,
     ) -> Grant:
         return cls(
             str(uuid4()),
@@ -226,6 +234,7 @@ class Grant:
             expires_at,
             policies,
             guest_identifier,
+            wallet_address=wallet_address,
         )
 
     def status(self, now: datetime) -> GrantStatus:
@@ -240,7 +249,12 @@ class Grant:
 
     def to_dict(self) -> dict:
         return {
-            "schema_version": 2,
+            "schema_version": 3 if self.wallet_address else 2,
+            **(
+                {"wallet_address": self.wallet_address, "wallet_policy": WALLET_POLICY}
+                if self.wallet_address
+                else {}
+            ),
             "grant_id": self.grant_id,
             "guest_display_name": self.guest_display_name,
             "guest_identifier": self.guest_identifier,
@@ -255,6 +269,18 @@ class Grant:
 
     @classmethod
     def from_dict(cls, value: object) -> Grant:
+        wallet = None
+        if type(value) is dict and value.get("schema_version") == 3:
+            if value.get("wallet_policy") != WALLET_POLICY or not value.get(
+                "wallet_address"
+            ):
+                raise ValidationError("Invalid wallet policy")
+            wallet = value["wallet_address"]
+            value = {
+                k: v
+                for k, v in value.items()
+                if k not in {"wallet_address", "wallet_policy"}
+            }
         data = require_keys(
             value,
             {
@@ -274,6 +300,7 @@ class Grant:
         if type(data["schema_version"]) is not int or data["schema_version"] not in (
             1,
             2,
+            3,
         ):
             raise ValidationError("Unsupported grant schema")
         if type(data["policies"]) is not list or len(data["policies"]) > MAX_ENTITIES:
@@ -293,4 +320,4 @@ class Grant:
                 legacy.append(policy | {"device_id": None, "unique_id": None})
             fields["policies"] = legacy
         fields["policies"] = tuple(LightPolicy.from_dict(p) for p in fields["policies"])
-        return cls(**fields)
+        return cls(**fields, wallet_address=wallet)

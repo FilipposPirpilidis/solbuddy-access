@@ -1,5 +1,6 @@
 """Volatile scoped credentials; no HA tokens, secrets on disk, or raw logging."""
 
+import base64
 import hashlib
 import hmac
 import re
@@ -10,9 +11,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from time import monotonic
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .models import GrantStatus
 from .storage import StorageUnavailable
+from .wallet_identity import MINT, public_key
 
 if TYPE_CHECKING:
     from .grants import GrantManager
@@ -72,19 +78,40 @@ def _digest(token: object, prefix: str) -> bytes:
     return hashlib.sha256(token.encode("ascii")).digest()
 
 
+@dataclass(slots=True, repr=False)
+class WalletChallenge:
+    credential: Credential
+    origin: str
+    renewal: bool
+    message: str
+    expires_at: datetime
+    deadline: float
+
+
 class GuestAuthenticator:
     """One invitation and session per grant, at most the 100 stored grants."""
 
     def __init__(
-        self, manager: GrantManager | None = None, *, enabled: bool = False
+        self,
+        manager: GrantManager | None = None,
+        *,
+        enabled: bool = False,
+        wallet_enabled: bool = False,
+        eligibility=None,
+        installation_id: str = "",
     ) -> None:
         self.manager = manager
         self.enabled = enabled
+        self.wallet_enabled = enabled and wallet_enabled
+        self.eligibility = eligibility
+        self.installation_id = installation_id or secrets.token_urlsafe(16)
+        self._challenges: dict[str, WalletChallenge] = {}
         self._invitations: dict[str, Credential] = {}
         self._sessions: dict[str, Credential] = {}
         self._global = Bucket(60, 2)
         self._sources: dict[str, Bucket] = {}
         if manager is not None:
+            manager.wallet_enabled = self.wallet_enabled
             manager.on_revoke = self.invalidate
             manager.on_close = self.close
 
@@ -97,8 +124,10 @@ class GuestAuthenticator:
         self._invitations.clear()
         self._sessions.clear()
         self._sources.clear()
+        self._challenges.clear()
 
     def invalidate(self, grant_id: str) -> None:
+        self._challenges.pop(grant_id, None)
         self._invitations.pop(grant_id, None)
         self._sessions.pop(grant_id, None)
 
@@ -131,6 +160,8 @@ class GuestAuthenticator:
             raise AuthError()
         if any(p.device_id is None or p.unique_id is None for p in grant.policies):
             raise AuthError()
+        if grant.wallet_address and not self.wallet_enabled:
+            raise AuthError(403, "wallet_access_disabled")
         return grant, now
 
     def _lookup(
@@ -187,6 +218,8 @@ class GuestAuthenticator:
 
     async def exchange(self, token: object) -> dict:
         item = self._lookup(token, "sbai_", self._invitations)
+        if self.manager.get(item.grant_id).wallet_address:
+            raise AuthError(403, "wallet_proof_required")
         async with self.manager._gate(item.grant_id):
             self.assert_live(item, self._invitations)
             self._invitations.pop(item.grant_id)  # Consume before any awaited IO.
@@ -218,6 +251,8 @@ class GuestAuthenticator:
             item.busy = False
 
     async def renew(self, item: Credential) -> dict:
+        if self.manager.get(item.grant_id).wallet_address:
+            raise AuthError(403, "wallet_proof_required")
         async with self.manager._gate(item.grant_id):
             self.assert_live(item)
             await self.manager.audit.append(
@@ -228,6 +263,110 @@ class GuestAuthenticator:
             # Rotation must not reset the request throttle.
             replacement.limiter = item.limiter
             self._sessions[item.grant_id] = replacement
+            return self._response(token, replacement)
+
+    def challenge(self, item: Credential, origin: str, *, renewal: bool) -> dict:
+        records = self._sessions if renewal else self._invitations
+        self.assert_live(item, records)
+        grant, now = self._active(item.grant_id)
+        if (
+            not self.wallet_enabled
+            or self.eligibility is None
+            or not grant.wallet_address
+        ):
+            raise AuthError(403, "wallet_access_disabled")
+        if urlsplit(origin).scheme != "https":
+            raise AuthError(403, "https_required")
+        expires = min(item.expires_at, now + timedelta(seconds=120))
+        nonce = secrets.token_hex(32)
+        purpose = "renew" if renewal else "login"
+        message = (
+            f"{urlsplit(origin).netloc} wants you to sign in "
+            "with your Solana account:\n"
+            f"{grant.wallet_address}\n\n"
+            "Sign in to SOLBUDDY Access. No transaction or token transfer.\n\n"
+            f"URI: {origin}/api/solbuddy_access/v1/wallet/ui\n"
+            f"Version: 1\nChain ID: solana:mainnet\nNonce: {nonce}\n"
+            f"Issued At: {now.isoformat()}\nExpiration Time: {expires.isoformat()}\n"
+            f"Request ID: {self.installation_id}:{grant.grant_id}:{purpose}\n"
+            f"Resources:\n- urn:solbuddy:mint:{MINT}\n- urn:solbuddy:minimum-usd:2.00"
+        )
+        self._challenges[grant.grant_id] = WalletChallenge(
+            item,
+            origin,
+            renewal,
+            message,
+            expires,
+            monotonic() + (expires - now).total_seconds(),
+        )
+        return {
+            "message": message,
+            "wallet_address": grant.wallet_address,
+            "expires_at": expires.isoformat(),
+        }
+
+    async def wallet_verify(
+        self, item: Credential, origin: str, signature: object, *, renewal: bool
+    ) -> dict:
+        records = self._sessions if renewal else self._invitations
+        self.assert_live(item, records)
+        grant, now = self._active(item.grant_id)
+        if (
+            not self.wallet_enabled
+            or self.eligibility is None
+            or not grant.wallet_address
+        ):
+            raise AuthError(403, "wallet_access_disabled")
+        challenge = self._challenges.pop(item.grant_id, None)  # Reserve before IO.
+        if (
+            challenge is None
+            or challenge.credential is not item
+            or challenge.origin != origin
+            or challenge.renewal != renewal
+            or now >= challenge.expires_at
+            or monotonic() >= challenge.deadline
+        ):
+            raise AuthError(401, "invalid_wallet_proof")
+        try:
+            if type(signature) is not str or len(signature) != 88:
+                raise ValueError("Invalid signature")
+            raw = base64.b64decode(signature, validate=True)
+            if len(raw) != 64 or base64.b64encode(raw).decode() != signature:
+                raise ValueError("Invalid signature")
+            Ed25519PublicKey.from_public_bytes(public_key(grant.wallet_address)).verify(
+                raw, challenge.message.encode()
+            )
+        except ValueError, InvalidSignature:
+            raise AuthError(401, "invalid_wallet_proof") from None
+        # Never hold the grant/revoke gate while querying remote providers.
+        evidence = await self.eligibility.verify(grant.wallet_address, self.manager.now)
+        async with self.manager._gate(item.grant_id):
+            self.assert_live(item, records)
+            evidence.check(grant.wallet_address, self.manager.now().timestamp())
+            if (
+                self.manager.now() >= challenge.expires_at
+                or monotonic() >= challenge.deadline
+            ):
+                raise AuthError(401, "invalid_wallet_proof")
+            await self.manager.audit.append(
+                "session_rotated" if renewal else "session_issued",
+                item.grant_id,
+                self.manager.now(),
+            )
+            self.assert_live(item, records)
+            evidence.check(grant.wallet_address, self.manager.now().timestamp())
+            if (
+                self.manager.now() >= challenge.expires_at
+                or monotonic() >= challenge.deadline
+            ):
+                raise AuthError(401, "invalid_wallet_proof")
+            token, replacement = self._new(item.grant_id, "sbas_", 900)
+            if renewal:
+                replacement.limiter = item.limiter
+            else:
+                self._invitations.pop(item.grant_id)
+            self._sessions[item.grant_id] = replacement
+            self._challenges.pop(item.grant_id, None)
             return self._response(token, replacement)
 
     @staticmethod
