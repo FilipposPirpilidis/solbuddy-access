@@ -105,6 +105,7 @@ class GuestAuthenticator:
         self.wallet_enabled = enabled and wallet_enabled
         self.eligibility = eligibility
         self.installation_id = installation_id or secrets.token_urlsafe(16)
+        self._transfers: dict[str, tuple] = {}
         self._challenges: dict[str, WalletChallenge] = {}
         self._invitations: dict[str, Credential] = {}
         self._sessions: dict[str, Credential] = {}
@@ -125,9 +126,11 @@ class GuestAuthenticator:
         self._sessions.clear()
         self._sources.clear()
         self._challenges.clear()
+        self._transfers.clear()
 
     def invalidate(self, grant_id: str) -> None:
         self._challenges.pop(grant_id, None)
+        self._transfers.pop(grant_id, None)
         self._invitations.pop(grant_id, None)
         self._sessions.pop(grant_id, None)
 
@@ -367,6 +370,51 @@ class GuestAuthenticator:
                 self._invitations.pop(item.grant_id)
             self._sessions[item.grant_id] = replacement
             self._challenges.pop(item.grant_id, None)
+            return self._response(token, replacement)
+
+    def transfer(self, item):
+        """One short-lived handoff per grant; cannot extend wallet eligibility."""
+        self.assert_live(item)
+        token = "sbat_" + secrets.token_urlsafe(32)
+        self._transfers[item.grant_id] = (
+            _digest(token, "sbat_"),
+            item,
+            monotonic() + 120,
+        )
+        return {"transfer_code": token, "expires_in": 120}
+
+    async def claim(self, token):
+        digest = _digest(token, "sbat_")
+        found = next(
+            (
+                (key, value)
+                for key, value in self._transfers.items()
+                if hmac.compare_digest(value[0], digest)
+            ),
+            None,
+        )
+        if found is None:
+            raise AuthError()
+        grant_id, (_, item, deadline) = found
+        self._transfers.pop(grant_id)  # Atomic one-use reservation before IO.
+        if monotonic() >= deadline:
+            raise AuthError()
+        async with self.manager._gate(grant_id):
+            self.assert_live(item)
+            if item.busy:
+                raise AuthError(409, "request_in_progress")
+            await self.manager.audit.append(
+                "session_rotated", grant_id, self.manager.now()
+            )
+            self.assert_live(item)
+            if item.busy or monotonic() >= deadline:
+                raise AuthError()
+            token, replacement = self._new(grant_id, "sbas_", 900)
+            replacement.expires_at = item.expires_at
+            replacement.deadline = item.deadline
+            replacement.limiter = item.limiter
+            self._sessions[grant_id] = replacement
+            self._challenges.pop(grant_id, None)
             return self._response(token, replacement)
 
     @staticmethod

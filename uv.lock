@@ -1037,6 +1037,15 @@ wheels = [
 ]
 
 [[package]]
+name = "home-assistant-frontend"
+version = "20260930.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/2b/4bcfe71498eb69a4387af9db487d2718692ca695686ffd6befc407a8576e/home_assistant_frontend-20260930.4.tar.gz", hash = "sha256:269d186924e1ab9d5c3992326dac3420d7f0c78d767ee4a14abe4011f68d6b56", size = 109960553, upload-time = "2026-10-16T11:41:03.462Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/ea/2074829fb00d53061804eae66303e2900319c348b4a92f239de7a537d6dc/home_assistant_frontend-20260930.4-py3-none-any.whl", hash = "sha256:05c207fb6ce6720d1782766b54a67acdf4bab83f133a562204b972d062862fc8", size = 110732939, upload-time = "2026-10-16T11:40:56.762Z" },
+]
+
+[[package]]
 name = "homeassistant"
 version = "2026.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2411,11 +2420,12 @@ wheels = [
 
 [[package]]
 name = "solbuddy-access"
-version = "0.1.0.dev6"
+version = "0.1.0.dev7"
 source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "home-assistant-frontend" },
     { name = "homeassistant" },
     { name = "pytest" },
     { name = "pytest-homeassistant-custom-component" },
@@ -2426,6 +2436,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "home-assistant-frontend", specifier = "==20260930.4" },
     { name = "homeassistant", specifier = "==2026.10.2" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.373" },

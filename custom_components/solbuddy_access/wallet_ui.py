@@ -6,11 +6,11 @@ from aiohttp import web
 from homeassistant.helpers.http import HomeAssistantView
 
 from .const import DOMAIN
-from .transport import TransportPolicy, async_transport_policy
 
 ASSETS = {
     "ui": ("wallet.html", "text/html"),
     "owner-ui": ("wallet.html", "text/html"),
+    "owner-panel.js": ("owner-panel.js", "application/javascript"),
     "client.js": ("client.js", "application/javascript"),
     "connectors.js": ("connectors.js", "application/javascript"),
     "wallet.css": ("wallet.css", "text/css"),
@@ -28,25 +28,13 @@ class WalletAsset(HomeAssistantView):
 
     async def get(self, request):
         runtime = self.hass.data.get(DOMAIN)
-        if (
-            runtime is None
-            or not runtime.authenticator.enabled
-            or not runtime.authenticator.wallet_enabled
-        ):
+        if runtime is None:
             return web.Response(status=404)
-        try:
-            policy = runtime.transport_policy or TransportPolicy(
-                https_origin=runtime.guest_origin
+        if self.asset == "owner-ui":
+            return web.Response(
+                status=302,
+                headers={"Location": "/solbuddy-access", "Cache-Control": "no-store"},
             )
-            if runtime.transport_options is not None:
-                policy = await async_transport_policy(
-                    self.hass, runtime.transport_options
-                )
-            TransportPolicy(
-                https_origin=policy.https_origin, proxy_ips=policy.proxy_ips
-            ).check(request, self.hass.http.trusted_proxies)
-        except Exception:
-            return web.Response(status=403)
         filename, content_type = ASSETS[self.asset]
         content = await self.hass.async_add_executor_job(
             (Path(__file__).parent / "www" / filename).read_text
@@ -70,3 +58,17 @@ class WalletAsset(HomeAssistantView):
 def register_ui(hass):
     for name in ASSETS:
         hass.http.register_view(WalletAsset(hass, name))
+
+
+async def register_panel(hass):
+    from homeassistant.components.panel_custom import async_register_panel
+
+    await async_register_panel(
+        hass,
+        frontend_url_path="solbuddy-access",
+        webcomponent_name="solbuddy-owner-panel",
+        sidebar_title="SOLBUDDY Access",
+        sidebar_icon="mdi:account-key",
+        require_admin=True,
+        module_url="/api/solbuddy_access/v1/wallet/owner-panel.js",
+    )

@@ -60,7 +60,7 @@ Before guest routes exist, test authentication, expiry, rotation, cross-grant is
 
 ## Optional wallet grants (0.1.0.dev6)
 
-See [wallet setup](wallet-access.md). All `/wallet/*` routes require explicitly enabled guest **and** wallet access and the configured HTTPS transport. Wallet public keys are managed over HTTP, not WebSocket, to avoid HA's WebSocket debug response logging. WebSocket creation rejects `wallet_address`; WebSocket reads redact that field.
+See [wallet setup](wallet-access.md). Wallet challenge/verification routes require enabled guest **and** wallet access and HTTPS. `/wallet/owner` instead always requires a native active HA owner and remains available with guest access disabled, over the existing HA connection. `/wallet/info` reports safe enablement/signing-URL metadata through the guest transport policy. Wallet public keys are managed over HTTP, not WebSocket, to avoid HA's WebSocket debug response logging. WebSocket creation rejects `wallet_address`; WebSocket reads redact that field.
 
 | POST path under `/api/solbuddy_access/v1` | Authentication | JSON body |
 | --- | --- | --- |
@@ -74,4 +74,11 @@ Create payload is the normal immutable light grant payload plus the owner-approv
 
 `/session` and `/session/renew` reject wallet grants with `wallet_proof_required`. Successful wallet sessions use the existing `/permissions`, `/check`, and `/execute` protocol, including explicitly enabled local HTTP command transport. Wallet proof itself remains HTTPS-only. Errors include `invalid_wallet_proof`, `eligibility_stale`, `eligibility_unavailable`, and `insufficient_sbud`. Failure does not extend a session; uncertain device commands must not be retried blindly.
 
-GET `/wallet/owner-ui` and `/wallet/ui` serve standalone bundled pages only when enabled and accessed through HTTPS. The owner page shell is public but its data and mutations require a current HA owner bearer. Assets contain no secrets and use no-store and restrictive CSP headers.
+GET `/wallet/owner-ui` redirects to the native `/solbuddy-access` panel. GET `/wallet/ui` serves the public guest shell on either address, including a disabled-state explanation. Public assets contain no secrets; guest APIs still enforce enablement and transport boundaries. Owner data and mutations always require a current native HA owner session.
+
+
+## Native HA panel and session transfer (0.1.0.dev7)
+
+`/solbuddy-access` is a custom HA sidebar panel. It uses `hass.callApi` with the current HA auth session; no pasted long-lived token, browser token storage, or secret-bearing WebSocket response is introduced. POST `/wallet/owner` also accepts `status` with empty payload and returns flags, supported-light choices and the HTTPS signing origin. Only an authenticated owner status request can remember a new HTTPS origin. The old owner-ui URL redirects to the panel; public assets contain no owner data. List/revoke/status remain available when guest access is disabled.
+
+POST `/session/transfer` uses the current session authorization and next sequence, with `{}` body. It returns a `transfer_code` and `expires_in: 120`. POST `/session/claim` uses `Authorization: SolbuddyTransfer <code>` and `{}` body, and returns a replacement session with sequence 1. Claim consumes the code exactly once, requires the original session and grant still be live, invalidates the old session, and preserves the old wall-clock and monotonic expiry plus rate limiter. No new eligibility lifetime is granted. Both endpoints obey local/remote guest transport checks. Restart, disabling, revocation, invitation replacement and session replacement make old codes unusable.

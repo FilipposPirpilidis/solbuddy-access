@@ -1,59 +1,45 @@
-# Wallet access setup — 0.1.0.dev6
+# Wallet access — 0.1.0.dev7
 
-Wallet grants require all three: **owner approval of the exact wallet, a signature from that wallet, and at least US$2 of SBUD at a fresh server-verified price**. Guest access and wallet access both default off. Upgrading does not enable them. Ordinary invitation-only grants remain a separate owner choice.
+SOLBUDDY now appears in the Home Assistant sidebar and uses your existing HA login. There is no owner-token field and no second proxy/origin configuration. Guest and wallet access both default off. Only the active HA owner can administer grants; other administrators are denied server-side.
 
-## Install and enable deliberately
+## Update and first test
 
-1. Copy the entire updated `custom_components/solbuddy_access` folder into Home Assistant's configuration directory, replacing the old integration folder, and restart Home Assistant. Include the new `www` directory. Do not add an integration block to `configuration.yaml`.
-2. Set up a working HTTPS address with a browser-trusted certificate. Direct TLS and the documented single trusted proxy are supported; see [transports](transports.md). Wallet pages and signatures require HTTPS, including on your LAN. Existing local HTTP device commands remain available when explicitly enabled. An HTTPS page will not call the HTTP endpoint.
-3. Optionally configure providers using `solbuddy_access_wallet.yaml` next to `configuration.yaml`. This is a separate file, not an include inside `configuration.yaml`:
+1. Replace the complete `custom_components/solbuddy_access` folder, including `www`, then restart Home Assistant. Refresh the HA browser page. Do not add anything to `configuration.yaml` for SOLBUDDY.
+2. For the free keyless setup, leave `solbuddy_access_wallet.yaml` absent. SOLBUDDY uses public Solana mainnet RPC and Jupiter Price V3. Rate limits or outages deny login; no paid subscription is required by the integration.
+3. Open HA through your existing HTTPS address and click **SOLBUDDY Access** in the sidebar. This opens `/solbuddy-access` and uses your current HA session automatically. The old `/api/solbuddy_access/v1/wallet/owner-ui` link redirects to this panel. If HA's external URL is not configured, this authenticated owner visit automatically remembers the HTTPS origin. Anonymous visits cannot set it.
+4. Follow **Configure guest and wallet access** to the integration options and explicitly enable both switches when ready to test. They remain off unless you enable them. There are no proxy-IP, origin, or subnet fields. Reloading invalidates existing credentials.
+5. Return to the panel and click **Refresh**. Enter a guest name and the exact approved Solana public wallet address. Choose a supported light from the list, turn-on and/or turn-off permission, and a duration in minutes. Click **Approve and create access**, then **Generate invitation**.
+6. Share the guest HTTPS page link shown in the panel and the invitation privately. Invitations expire after five minutes and can be used once. Generating a replacement invalidates existing credentials for that grant.
+7. On the guest HTTPS page, choose Phantom, Solflare or Trust and sign with the approved account. No payment, staking, transaction, token approval or private key is requested. Test the permitted controls, then revoke from the owner panel and confirm subsequent commands fail.
 
-   ```yaml
-   rpc_url: !secret solbuddy_rpc_url
-   jupiter_api_key: !secret solbuddy_jupiter_api_key
-   ```
+The panel currently lists only individual physical Hue v2 lights. It explains when no supported devices exist. Switches, eWeLink, templates, groups, climate and other integrations are not enabled by this change. Grants still cover one explicitly selected light. Owner approval binds one immutable wallet; changing it requires revoking and replacing the grant.
 
-   Add those values to HA's `secrets.yaml`. The RPC must be a Solana mainnet HTTPS endpoint. If the file is absent, the integration uses the public mainnet RPC and requests Jupiter without a key. Public providers may rate-limit or require authentication; failures deny login. Jupiter documents API-key authentication, so configure a key for reliable operation. Reload the integration after changing this file. Provider keys never go to the browser; the RPC provider can see queried wallet addresses.
-4. Open HA **through the configured HTTPS address**, signed in as its owner. Go to Settings → Devices & services → SOLBUDDY Access → Configure. Set the exact HTTPS origin (scheme, host and optional port, without a path), configure any proxy peer, then explicitly enable guest access and wallet access. Keep them disabled until you are ready to test. Enabling wallet access from local HTTP is rejected.
+## Local HTTP and remote HTTPS
 
-## Approve and invite a guest
+HA's existing network adapters, internal/external URLs and trusted proxy middleware determine allowed connections. The default local hostname `http://homeassistant.local:8123` and private HA adapter IPv4 addresses are recognized. A previously configured HTTPS origin also remains recognized. The owner can discover the remote origin simply by opening the sidebar panel through that HTTPS address.
 
-At your HTTPS Home Assistant address, open this path in a normal browser tab:
+For this installation:
 
-```text
-/api/solbuddy_access/v1/wallet/owner-ui
-```
+- Owner panel: `https://fphomebuddy.uk/solbuddy-access` or `http://homeassistant.local:8123/solbuddy-access`.
+- Wallet signing: `https://fphomebuddy.uk/api/solbuddy_access/v1/wallet/ui`.
+- Local guest controls: `http://homeassistant.local:8123/api/solbuddy_access/v1/wallet/ui`.
 
-For example, append that path to your own `https://ha.example` address. The UI is bundled locally; no CDN scripts or browser storage are used.
+The local guest page links to HTTPS for wallet signing. After signing in there, choose **Move session to another HA address**. Paste the one-time code into **Use session here** on the local guest page. This is an explicit transfer, not a token in a URL or a mixed-content browser request. The code expires in two minutes; claiming it invalidates the previous session and preserves the original expiry. It cannot bypass wallet eligibility or extend access. To renew, transfer back to HTTPS, connect the approved wallet and sign again, or obtain a new invitation. The UI stores no credentials in localStorage/sessionStorage. Reloading a page loses its credentials.
 
-- Enter a Home Assistant access token belonging to the **owner**, not another administrator. You can create a long-lived access token in your HA profile's Security tab. Keep this token private, revoke it when no longer needed, and never send it to a guest.
-- Enter a guest name, verify their full Solana wallet address, select the exact reviewed Hue v2 physical light by entity ID, and choose the grant duration. This screen approves turn-on and turn-off only. Other device implementations and climate remain unsupported.
-- Choose **Approve wallet and create grant**, then **Generate invitation**. Transfer the invitation privately; it expires after five minutes and is single-use. Reissuing one invalidates existing credentials for that grant.
-- Clear the owner token when finished. The owner can inspect grants and revoke them on this page. Changing the wallet requires revoking and creating a new grant.
+Local HTTP is unencrypted. Enabling guest access now permits direct local HTTP from detected private HA networks as well as recognized HTTPS. Remote/proxy requests never receive the LAN exception, even if the proxy itself is on your LAN. Do not expose the plaintext HA port directly to the internet. Network detection failure denies local guest requests while HTTPS and HA owner management remain usable.
 
-Send the guest the HTTPS address with this path, plus their invitation separately:
+A cloudflared process on a separate Raspberry Pi works through HA's existing `use_x_forwarded_for` / `trusted_proxies` handling. SOLBUDDY no longer requires copying the Pi's IP into a separate list and accepts HA-validated forwarding chains. Forwarded requests must still represent HTTPS. CF-specific headers alone grant no trust. Your HA/tunnel configuration must already forward the original host and scheme correctly; this integration does not modify HA's HTTP configuration or fix arbitrary tunnel overrides. Nabu Casa Remote UI remains outside the tested transport support.
 
-```text
-/api/solbuddy_access/v1/wallet/ui
-```
+## Wallet and price rules
 
-The guest pastes the invitation, chooses **Phantom**, **Solflare**, or **Trust Wallet**, and signs the displayed login message using the approved account. No transfer, transaction, staking, token approval, seed phrase, or private key is requested. An unapproved wallet cannot sign in even if it holds enough coins. Successful login displays the permitted controls and session expiry.
+The fixed mint is `ERAMuCbBAfHhxNCEb2ZJgf9rLJ4KBbvY1bD9dzHgpump`, on Solana mainnet, Token-2022, six decimals. Login and renewal require owner approval, an invitation/session, an exact one-time Ed25519 signature, finalized owned token holdings, and a server-calculated value of at least US$2. The wallet balance is not spent or locked.
 
-## Freshness and session rules
+Jupiter observations older than 300 seconds are rejected using the source block's time, even if the HTTP response was just fetched. Balance observations must be at most 60 seconds old. Missing, future, nonfinite or malformed data fails closed. No stale-price fallback or fixed token quantity exists. Thin trading can make login unavailable even with sufficient holdings. Paying for a provider does not make an old price fresh.
 
-The pinned mint is `ERAMuCbBAfHhxNCEb2ZJgf9rLJ4KBbvY1bD9dzHgpump` on Solana mainnet, Token-2022, six decimals. The server verifies mainnet genesis and mint properties, sums distinct finalized token accounts owned by the approved wallet, and values the raw balance using Jupiter Price V3 and Decimal arithmetic. Holdings worth exactly US$2 qualify; values below it do not.
+Sessions last at most 15 minutes and never beyond grant expiry. Renewal requires a new signature and fresh eligibility. A failed renewal does not extend an existing session. Balance drops are detected at renewal; owner revocation is immediate at subsequent authorization. Session transfers never extend that window. Restart/reload/disable/revoke invalidates volatile credentials and transfer codes. Wallet bindings and grant/revocation records persist; secrets, signatures and usable credentials do not.
 
-- Price observations must be **at most 300 seconds old**, using the Jupiter source block's time from Solana RPC. A fresh HTTP response containing an old price is rejected. Future, missing, invalid or nonfinite observations are rejected.
-- Finalized balance observations must be at most 60 seconds old. Eligibility evidence expires after 30 seconds and is rechecked before session creation, including after audit IO. Provider work has a 12-second total timeout and bounded responses.
-- There is no stale-price fallback, hard-coded coin quantity, browser-supplied price, or grace threshold. Thin trading may prevent sign-in frequently. The read-only October 19 research found a price over 17 hours old; that observation is rejected.
-- Sessions last at most 15 minutes and never beyond grant expiry. **Sign and renew session** requires a new signature and fresh eligibility checks. Failed renewal does not extend the existing session. A balance drop or pricing outage takes effect at renewal or expiry, not immediately during an already issued session. Owner revocation invalidates it immediately for subsequent authorization.
-- Challenges expire after two minutes and bind the wallet, installation, grant, HTTPS origin, purpose and nonce. Replay and the old invitation-only login/renewal paths cannot bypass wallet requirements.
-- Restarting, reloading, disabling guest access or revoking invalidates volatile credentials. Wallet grants remain stored, with no private keys, signatures, invitations or session tokens persisted.
+Optional provider overrides still use a separate `solbuddy_access_wallet.yaml` beside `configuration.yaml`, with `rpc_url` and `jupiter_api_key` supporting HA `!secret`. Keys stay server-side; RPC providers observe queried public wallets. Leave the file absent for keyless operation.
 
-## Compatibility and testing limits
+## Validation limits
 
-Connectors implement Wallet Standard discovery and selected injected providers for Phantom, Solflare and Trust Wallet. Use software accounts supporting raw Solana Ed25519 message signing. Unsupported formats/accounts fail closed. Multiple extensions are selected by name; no arbitrary default provider or transaction fallback is used.
-
-Automated adapter tests cover all three wallets with synthetic providers and real Ed25519 signatures; HA HTTPS tests exercise owner approval, invitation, signed login and device dispatch. Actual extension versions, phone wallet browsers, and real lights still require manual testing. Mobile QR/WalletConnect relay and app-switch deep-link flows are not included. A phone wallet browser works only if it exposes a supported provider; wallet brand alone does not guarantee every mobile connection mode.
-
-The owner token remains in page memory until cleared/closed. Guest credentials likewise remain in memory; reloading the page requires a new invitation. **Forget session** clears this browser's reference; use owner revocation to invalidate it server-side. Avoid shared devices. The standalone page cannot be embedded in an iframe.
+Automated tests use real HA HTTP/auth/forwarded middleware, real Ed25519 signatures and synthetic provider/device data. Browser tests exercise the native panel and local transfer UI with synthetic API responses. Actual extension versions, your live tunnel, qualifying real wallet holdings and physical devices still need installation testing. Mobile QR/deep links are not implemented; mobile wallet browsers require compatible injected/Wallet Standard providers. No claim is made that a local automated test has deployed or validated your production HA instance.

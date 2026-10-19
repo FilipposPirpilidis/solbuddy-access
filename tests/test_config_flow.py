@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp.test_utils import make_mocked_request
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers.http import KEY_AUTHENTICATED, current_request
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -136,20 +136,11 @@ async def test_guest_auth_always_disabled(credential):
         await GuestAuthenticator().authenticate(credential)
 
 
-@pytest.mark.parametrize(
-    "tls,gate,expected",
-    [
-        (False, True, "invalid_https_origin"),
-        (True, False, "security_gate_closed"),
-        (True, True, None),
-    ],
-)
+@pytest.mark.parametrize("gate", [False, True])
 @pytest.mark.parametrize("wallet", [False, True])
 async def test_guest_options_security_gate(
-    hass, owner_request, monkeypatch, tls, gate, expected, wallet
+    hass, owner_request, monkeypatch, gate, wallet
 ):
-    from unittest.mock import Mock
-
     from custom_components.solbuddy_access import const
 
     result = await hass.config_entries.flow.async_init(
@@ -161,41 +152,29 @@ async def test_guest_options_security_gate(
     assert not entry.runtime_data.authenticator.enabled
     assert not entry.runtime_data.authenticator.wallet_enabled
     monkeypatch.setattr(const, "GUEST_TRANSPORT_VERIFIED", gate)
-    transport = Mock()
-    transport.get_extra_info.return_value = object() if tls else None
-    request = make_mocked_request(
-        "GET", "/api/websocket", headers={"Host": "ha.example"}, transport=transport
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert {key.schema for key in flow["data_schema"].schema} == {
+        "guest_enabled",
+        "wallet_enabled",
+    }
+    result = await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"guest_enabled": True, "wallet_enabled": wallet}
     )
-    request[KEY_AUTHENTICATED] = True
-    request["hass_user"] = owner_request["hass_user"]
-    context = current_request.set(request)
-    try:
-        flow = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            flow["flow_id"],
-            {
-                "guest_enabled": True,
-                "guest_origin": "https://ha.example",
-                "wallet_enabled": wallet,
-            },
-        )
-        if expected == "security_gate_closed":
-            assert result["reason"] == expected
-        elif expected:
-            assert result["errors"] == {"base": expected}
-        else:
-            assert result["type"] is FlowResultType.CREATE_ENTRY
-            await hass.async_block_till_done()
-            assert entry.runtime_data.authenticator.enabled
-            assert entry.runtime_data.authenticator.wallet_enabled is wallet
-            flow = await hass.config_entries.options.async_init(entry.entry_id)
-            await hass.config_entries.options.async_configure(
-                flow["flow_id"], {"guest_enabled": False}
-            )
-            await hass.async_block_till_done()
-            assert not entry.runtime_data.authenticator.enabled
-    finally:
-        current_request.reset(context)
+    if not gate:
+        assert result["reason"] == "security_gate_closed"
+        return
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.runtime_data.authenticator.enabled
+    assert entry.runtime_data.authenticator.wallet_enabled is wallet
+    assert entry.options["connection_mode"] == "ha"
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"guest_enabled": False, "wallet_enabled": True}
+    )
+    await hass.async_block_till_done()
+    assert not entry.runtime_data.authenticator.enabled
+    assert not entry.runtime_data.authenticator.wallet_enabled
 
 
 async def test_guest_options_reject_admin(hass, owner_request, hass_admin_user):
@@ -209,103 +188,15 @@ async def test_guest_options_reject_admin(hass, owner_request, hass_admin_user):
     assert result["reason"] == "owner_required"
 
 
-async def test_enable_local_http_and_https_from_local_owner(
-    hass, owner_request, monkeypatch
-):
-    from unittest.mock import AsyncMock, Mock
-
-    monkeypatch.setattr(
-        "custom_components.solbuddy_access.transport.async_get_adapters",
-        AsyncMock(
-            return_value=[
-                {
-                    "enabled": True,
-                    "ipv4": [{"address": "192.168.68.10", "network_prefix": 24}],
-                    "ipv6": [],
-                }
-            ]
-        ),
-    )
-
+async def test_options_reject_removed_proxy_fields(hass, owner_request):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     await hass.async_block_till_done()
-    entry = result["result"]
-    transport = Mock()
-    transport.get_extra_info.side_effect = lambda key: (
-        ("192.168.68.25", 1234) if key == "peername" else None
-    )
-    request = make_mocked_request(
-        "GET",
-        "/api/websocket",
-        headers={"Host": "192.168.68.10:8123"},
-        transport=transport,
-    )
-    request[KEY_AUTHENTICATED] = True
-    request["hass_user"] = owner_request["hass_user"]
-    context = current_request.set(request)
-    try:
-        flow = await hass.config_entries.options.async_init(entry.entry_id)
-        values = {
-            "guest_enabled": True,
-            "guest_origin": "https://remote.example",
-            "local_http_enabled": True,
-            "local_http_origin": "http://192.168.68.10:8123",
-            "https_proxy_ips": "192.168.68.112",
-        }
-        rejected = await hass.config_entries.options.async_configure(
-            flow["flow_id"], values | {"wallet_enabled": True}
+    flow = await hass.config_entries.options.async_init(result["result"].entry_id)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            flow["flow_id"],
+            {"guest_enabled": True, "https_proxy_ips": "192.168.68.112"},
         )
-        assert rejected["errors"] == {"base": "invalid_https_origin"}
-        result = await hass.config_entries.options.async_configure(
-            flow["flow_id"], values
-        )
-        assert result["type"] is FlowResultType.CREATE_ENTRY
-        await hass.async_block_till_done()
-        assert "local_http_networks" not in entry.options
-        policy = entry.runtime_data.transport_policy
-        assert policy.local_origin == values["local_http_origin"]
-        assert policy.https_origin == values["guest_origin"]
-        assert entry.runtime_data.authenticator.enabled
-        flow = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            flow["flow_id"], {"guest_enabled": False}
-        )
-        await hass.async_block_till_done()
-        assert not entry.runtime_data.authenticator.enabled
-        assert not entry.runtime_data.transport_policy.local_origin
-    finally:
-        current_request.reset(context)
-
-
-async def test_local_network_detection_error_and_removed_field(
-    hass, owner_request, monkeypatch
-):
-    from unittest.mock import AsyncMock
-
-    monkeypatch.setattr(
-        "custom_components.solbuddy_access.transport.async_get_adapters",
-        AsyncMock(return_value=[]),
-    )
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
-    await hass.async_block_till_done()
-    entry = result["result"]
-    flow = await hass.config_entries.options.async_init(entry.entry_id)
-    assert "local_http_networks" not in {
-        key.schema for key in flow["data_schema"].schema
-    }
-    result = await hass.config_entries.options.async_configure(
-        flow["flow_id"],
-        {
-            "guest_enabled": True,
-            "local_http_enabled": True,
-            "local_http_origin": "http://homeassistant.local:8123",
-        },
-    )
-    assert result["errors"] == {"base": "local_network_unavailable"}
-    assert not entry.runtime_data.authenticator.enabled

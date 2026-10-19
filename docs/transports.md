@@ -1,3 +1,9 @@
+# Automatic HA connections (0.1.0.dev7)
+
+Current setup: [wallet and native owner panel guide](wallet-access.md). SOLBUDDY now uses HA network interfaces, URL settings and trusted proxy middleware. Duplicate origin, proxy and subnet fields are removed. Guest access enables direct local HTTP and recognized HTTPS; wallet signing remains HTTPS-only. Cloudflare-style forwarding chains are covered by HA middleware tests. Owner management remains accessible with guest access disabled.
+
+The text below records the superseded dev5 transport implementation; its configuration fields and restrictions are not current setup instructions.
+
 # Local HTTP and remote HTTPS (0.1.0.dev5)
 
 This update supports guest invitations, sessions, and commands over an explicitly enabled local HTTP connection and remote HTTPS simultaneously. Guest access and local HTTP both default off. Existing HTTPS-only settings remain HTTPS-only after upgrade. Wallet and coin eligibility are not implemented.

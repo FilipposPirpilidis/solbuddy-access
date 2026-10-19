@@ -20,24 +20,18 @@
     "step": {
       "init": {
         "title": "Guest access",
-        "description": "Guest access defaults off. HTTPS can be direct or through an explicitly trusted proxy. Optional local HTTP sends credentials and commands without encryption. Local networks are detected automatically from Home Assistant enabled private network interfaces. Reloading invalidates all guest credentials. Wallet login requires HTTPS and a separate opt-in. Prices older than five minutes are rejected. Owner and guest wallet pages are documented in the installation guide.",
+        "description": "Guest and wallet access default off. SOLBUDDY uses Home Assistant network interfaces, URLs, and trusted proxies automatically. Enabled guest controls work on local HTTP (unencrypted) and remote HTTPS. Wallet signatures require HTTPS and a fresh US$2 SBUD valuation. Open SOLBUDDY Access in the sidebar to manage grants using your HA login.",
         "data": {
           "guest_enabled": "Enable guest access",
-          "guest_origin": "HTTPS origin (optional when local HTTP is enabled)",
-          "local_http_enabled": "Allow unencrypted local HTTP",
-          "local_http_origin": "Local HTTP origin (for example http://192.168.68.10:8123)",
-          "https_proxy_ips": "HTTPS proxy IP addresses (comma-separated; also trust these in HA)",
           "wallet_enabled": "Enable owner-approved wallets (Phantom, Solflare, Trust; US$2 SBUD minimum)"
         }
       }
     },
-    "error": {
-      "invalid_https_origin": "Check the origins and proxy IPs. Submit from a connection allowed by these settings. Local HTTP must come from a detected Home Assistant private network; forwarded HTTPS needs a proxy trusted by both HA and SOLBUDDY.",
-      "local_network_unavailable": "Home Assistant did not report a usable private network. Check its enabled network interfaces under Settings \u2192 System \u2192 Network, then retry. Local HTTP remains blocked."
-    },
+    "error": {},
     "abort": {
       "owner_required": "An authenticated, active Home Assistant owner must change guest options.",
-      "security_gate_closed": "Guest access is disabled until the implementation security tests pass."
+      "security_gate_closed": "Guest access is disabled until the implementation security tests pass.",
+      "invalid_input": "Unexpected options; reload the form."
     }
   }
 }

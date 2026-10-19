@@ -2,86 +2,90 @@ import {registry} from './connectors.js';
 const $ = id => document.getElementById(id);
 const base = '/api/solbuddy_access/v1/';
 const discover = registry();
-let wallets = [], session = null, connected = null;
-const errors = {eligibility_stale:'The price or balance observation is stale. No new session was issued.', eligibility_unavailable:'Fresh balance or pricing is unavailable. Try again later.', insufficient_sbud:'This wallet holds less than US$2 of SBUD.', invalid_wallet_proof:'Wallet proof expired, was already used, or does not match the approved wallet.', wallet_proof_required:'A wallet signature is required.', wallet_access_disabled:'Wallet access is disabled.', unauthorized:'Invitation or session is invalid or expired.'};
-function status(text) {$('status').textContent = text;}
-function output(value) {$('result').textContent = JSON.stringify(value, null, 2);}
-function forget() {session = null; connected = null; $('controls').hidden = true; $('invitation').value = '';}
-async function call(path, auth, data = {}, seq = null, method = 'POST') {
-  const headers = {'Content-Type':'application/json', 'Authorization':auth};
-  if (seq !== null) headers['X-Solbuddy-Sequence'] = String(seq);
+let wallets = [], session = null, connected = null, allowed = [];
+const https = location.protocol === 'https:';
+const errors = {eligibility_stale:'Price or balance observation is stale. No new session was issued.',eligibility_unavailable:'Fresh pricing or balance is unavailable. Try again later.',insufficient_sbud:'This wallet holds less than US$2 of SBUD.',invalid_wallet_proof:'Wallet proof expired or does not match the approved wallet.',unauthorized:'Invitation, transfer code, or session is invalid or expired.'};
+function status(text) {$('status').textContent=text;}
+function forget() {session=null;connected=null;$('controls').hidden=true;$('invitation').value='';$('transferCode').value='';$('issuedTransfer').value='';$('transferOutput').hidden=true;}
+async function call(path, auth=null, data={}, seq=null, method='POST') {
+  const headers = {'Content-Type':'application/json'};
+  if(auth) headers.Authorization=auth;
+  if(seq!==null) headers['X-Solbuddy-Sequence']=String(seq);
   let response;
-  try {response = await fetch(base + path, {method, headers, body:method === 'GET' ? undefined : JSON.stringify(data), cache:'no-store', credentials:'omit', redirect:'error'});}
-  catch {forget(); throw new Error('Connection failed. Do not repeat an uncertain device command; obtain a new invitation.');}
-  const result = await response.json();
-  if (!response.ok) {
-    if (session) forget();
-    throw new Error(errors[result.error] || `Request denied (${response.status}). ${result.error || ''}`);
-  }
+  try {response=await fetch(base+path,{method,headers,body:method==='GET'?undefined:JSON.stringify(data),cache:'no-store',credentials:'omit',redirect:'error'});}
+  catch {forget();throw new Error('Connection failed. Do not repeat uncertain device commands.');}
+  const result=await response.json();
+  if(!response.ok) {if(session) forget();throw new Error(errors[result.error]||`Request denied (${response.status}): ${result.error||''}`);}
   return result;
 }
-function b64(bytes) {return btoa(String.fromCharCode(...bytes));}
-function setSession(value) {session = {token:value.session_token, next:value.next_sequence}; $('controls').hidden = false; $('expiry').textContent = 'Session expires: ' + value.expires_at;}
-async function sessionCall(path, data = {}, method = 'POST') {
-  if (!session) throw new Error('Sign in first.');
-  return call(path, 'SolbuddySession ' + session.token, data, session.next++, method);
+function setSession(value) {session={token:value.session_token,next:value.next_sequence};$('controls').hidden=false;$('expiry').textContent='Session expires: '+value.expires_at;}
+async function sessionCall(path,data={},method='POST') {
+  if(!session) throw new Error('Sign in or import a session first.');
+  return call(path,'SolbuddySession '+session.token,data,session.next++,method);
 }
+function b64(bytes) {return btoa(String.fromCharCode(...bytes));}
 function refresh() {
-  wallets = discover(); $('wallet').replaceChildren(new Option('Select wallet', ''));
-  wallets.forEach((wallet,i) => $('wallet').add(new Option(wallet.name, String(i))));
-  if (!wallets.length) status('No supported Solana wallet found. Use an HTTPS top-level page with a supported extension or wallet browser.');
+  wallets=discover();$('wallet').replaceChildren(new Option('Select wallet',''));
+  wallets.forEach((w,i)=>$('wallet').add(new Option(w.name,String(i))));
+  if(!wallets.length) status('No supported wallet found. Use an HTTPS browser tab with Phantom, Solflare or Trust.');
+}
+function buttons() {
+  const policy=allowed.find(p=>p.entity_id===$('entity').value);
+  for(const action of ['turn_on','turn_off']) $(action).disabled=!policy?.actions.includes(action);
+  $('renew').hidden=!https;
 }
 async function permissions() {
-  const result = await sessionCall('permissions', {}, 'GET');
-  $('entity').replaceChildren(); result.policies.forEach(policy => $('entity').add(new Option(policy.entity_id, policy.entity_id))); output(result);
+  const result=await sessionCall('permissions',{},'GET');allowed=result.policies;
+  $('entity').replaceChildren(...allowed.map(p=>new Option(p.entity_id,p.entity_id)));
+  $('result').textContent=allowed.map(p=>p.entity_id+': '+p.actions.map(a=>a.replaceAll('_',' ')).join(', ')).join('\n');buttons();
 }
-const ownerCall = (operation, payload={}) => call('wallet/owner', 'Bearer ' + $('ownerToken').value, {operation,payload});
-const actions = {
-  refresh,
+const actions={refresh,permissions,
   async login() {
-    if ($('wallet').value === '') throw new Error('Select a wallet.');
-    const invitation = $('invitation').value.trim();
-    connected = await wallets[Number($('wallet').value)].connect();
-    const challenge = await call('wallet/challenge', 'SolbuddyInvite ' + invitation);
-    if (connected.address !== challenge.wallet_address) throw new Error('Selected wallet does not match the owner-approved address.');
-    const signature = b64(await connected.sign(challenge.message));
-    setSession(await call('wallet/verify', 'SolbuddyInvite ' + invitation, {signature}));
-    $('invitation').value = ''; await permissions(); status('Signed in. Only your approved controls are available.');
+    if(!https) throw new Error('Open HTTPS to sign with your wallet.');
+    if($('wallet').value==='') throw new Error('Select a wallet.');
+    const invitation=$('invitation').value.trim();
+    connected=await wallets[Number($('wallet').value)].connect();
+    const challenge=await call('wallet/challenge','SolbuddyInvite '+invitation);
+    if(connected.address!==challenge.wallet_address) throw new Error('Selected account does not match the owner-approved wallet.');
+    setSession(await call('wallet/verify','SolbuddyInvite '+invitation,{signature:b64(await connected.sign(challenge.message))}));
+    $('invitation').value='';await permissions();status('Signed in. Your approved controls are available.');
   },
-  permissions,
   async renew() {
-    if (!connected) throw new Error('Connect the approved wallet again.');
-    const challenge = await sessionCall('wallet/renew-challenge');
-    if (connected.address !== challenge.wallet_address) throw new Error('Wrong wallet.');
-    const signature = b64(await connected.sign(challenge.message));
-    setSession(await sessionCall('wallet/renew', {signature})); status('Session renewed with a fresh eligibility check.');
+    if(!https) throw new Error('Renew on HTTPS.');
+    const challenge=await sessionCall('wallet/renew-challenge');
+    if(!connected) {
+      refresh();
+      throw new Error('Select your wallet, then click Sign and renew again.');
+    }
+    if(connected.address!==challenge.wallet_address) throw new Error('Wrong wallet.');
+    setSession(await sessionCall('wallet/renew',{signature:b64(await connected.sign(challenge.message))}));status('Renewed after fresh eligibility checks.');
   },
-  logout() {forget(); output({}); status('Session forgotten on this device. Owner revocation invalidates it server-side.');},
-  clearOwner() {$('ownerToken').value = ''; $('issued').value = ''; $('grants').replaceChildren(); output({}); status('Owner credential cleared.');},
-  async create() {
-    const hours = Number($('hours').value); if (!Number.isInteger(hours) || hours < 1 || hours > 720) throw new Error('Choose 1–720 hours.');
-    const address = $('approvedWallet').value.trim();
-    if (!confirm('Approve this wallet for the selected light?\n\n' + address + '\n\n' + $('light').value)) return;
-    const now = Date.now();
-    const grant = await ownerCall('create', {guest_display_name:$('guestName').value.trim(), wallet_address:address, starts_at:new Date(now).toISOString(), expires_at:new Date(now+hours*3600000).toISOString(), policies:[{entity_id:$('light').value.trim(), actions:['turn_on','turn_off']}]});
-    await actions.list(); $('grants').value = grant.grant_id; status('Wallet approved. Generate an invitation to sign in.');
+  async transfer() {
+    const result=await sessionCall('session/transfer');$('issuedTransfer').value=result.transfer_code;$('transferOutput').hidden=false;
+    status('Paste this one-time code into the guest page at the other HA address within two minutes. Do not put it in a URL.');
   },
-  async list() {
-    const {grants} = await ownerCall('list'); $('grants').replaceChildren();
-    grants.forEach(g => $('grants').add(new Option(`${g.guest_display_name} · ${g.status} · ${g.wallet_address}`, g.grant_id))); output(grants);
+  async claim() {
+    setSession(await call('session/claim','SolbuddyTransfer '+$('transferCode').value.trim()));$('transferCode').value='';await permissions();status('Session moved here. Its original expiry is unchanged.');
   },
-  async issue() {
-    const value = await call('invitations', 'Bearer ' + $('ownerToken').value, {grant_id:$('grants').value});
-    $('issued').value = value.invitation; status('Transfer this invitation privately. Expires: ' + value.expires_at);
-  },
-  async revoke() {await ownerCall('revoke',{grant_id:$('grants').value}); $('issued').value=''; await actions.list(); status('Grant revoked.');}
+  logout(){forget();$('result').textContent='';status('Session forgotten here. Owner revocation invalidates it server-side.');}
 };
-for (const action of ['turn_on','turn_off']) actions[action] = async () => {output(await sessionCall('execute',{entity_id:$('entity').value,action,parameters:{}})); status('Request completed. A dispatch receipt does not prove physical device state.');};
-for (const [id, action] of Object.entries(actions)) $(id).addEventListener('click', async () => {
-  document.querySelectorAll('button').forEach(b => b.disabled = true);
-  try {await action();} catch(error) {status(error.message || 'Operation failed.');}
-  finally {document.querySelectorAll('button').forEach(b => b.disabled = false);}
+for(const action of ['turn_on','turn_off']) actions[action]=async()=>{await sessionCall('execute',{entity_id:$('entity').value,action,parameters:{}});status('Command dispatched.');};
+for(const [id,action] of Object.entries(actions)) $(id).addEventListener('click',async()=>{
+  document.querySelectorAll('button').forEach(b=>b.disabled=true);
+  try {await action();} catch(e){status(e.message||'Operation failed.');}
+  finally {document.querySelectorAll('button').forEach(b=>b.disabled=false);buttons();}
 });
-const owner = location.pathname.endsWith('/owner-ui'); $('owner').hidden = !owner; $('guest').hidden = owner; $('heading').textContent = owner ? 'Approve guest wallets' : 'Connect your approved wallet';
-window.addEventListener('pagehide', () => {forget(); $('ownerToken').value=''; $('issued').value='';});
-if (!owner) refresh();
+$('entity').addEventListener('change',buttons);
+$('wallet').addEventListener('change',async()=>{if(session && $('wallet').value!==''){try{connected=await wallets[Number($('wallet').value)].connect();}catch(e){status(e.message);}}});
+window.addEventListener('pagehide',forget);
+try {
+  const info=await call('wallet/info',null,{},null,'GET');
+  if(!info.guest_enabled || !info.wallet_enabled) status('Guest wallet access is disabled. Ask the owner to enable it in SOLBUDDY settings.');
+  else {
+    $('loginSection').hidden=!https;$('claimSection').hidden=false;
+    $('connection').textContent=https?'Connect your approved wallet below.':'Wallet signing requires HTTPS. Open the signing page, sign in there, then move the session back here.';
+    if(info.https_origin) {$('signing').href=info.https_origin+'/api/solbuddy_access/v1/wallet/ui';$('signing').hidden=https;}
+    else if(!https) status('The owner must open the SOLBUDDY panel through HTTPS once to discover the signing address.');
+    if(https) refresh();
+  }
+}catch(e){status(e.message);}

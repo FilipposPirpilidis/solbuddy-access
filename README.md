@@ -2,7 +2,7 @@
 
 Self-hosted Home Assistant integration foundation for temporary, revocable guest access to selected lights and climate devices.
 
-**Status: Wallet approval, Phantom/Solflare/Trust signing connectors, and fresh US$2 SBUD eligibility are implemented in 0.1.0.dev6. Wallet access defaults off. Phase 3 guest authentication and sessions are implemented and security-tested. Guest access defaults off and requires explicit owner configuration. Local HTTP is a separate opt-in; remote HTTPS supports direct TLS or one trusted proxy. This is a development build; real-device and release-readiness validation remain outstanding.**
+**Status: Wallet approval, Phantom/Solflare/Trust signing connectors, and fresh US$2 SBUD eligibility are implemented in 0.1.0.dev7. Wallet access defaults off. Phase 3 guest authentication and sessions are implemented and security-tested. Guest access defaults off and requires explicit owner configuration. Guest access enables detected local HTTP and HA-trusted remote HTTPS. Wallet signing remains HTTPS-only; a native sidebar panel uses the existing HA login. This is a development build; real-device and release-readiness validation remain outstanding.**
 
 The backend milestone is tested: a 72-hour grant for one selected light denies other entities and actions. The initial enrollment adapter accepts individual Hue v2 physical lights only; groups, templates, and unknown implementations are rejected. Tests use synthetic device fixtures with real HA registries and service dispatch; a real bridge/device has not been exercised. No Home Assistant account or homeowner token is given to guests.
 
@@ -35,7 +35,8 @@ SOLBUDDY Access is independent of HomeBuddy, with possible future integration. O
 - Single-use invitations, scoped rotating sessions, replay protection, rate limits, and configurable local HTTP / remote HTTPS guest control.
 - Owner-only options; guest access defaults off and credentials are invalidated on reload/restart/revocation.
 - Local HTTP detects allowed private networks from Home Assistant automatically; no manual subnet entry.
-- Owner-approved immutable wallet grants, HTTPS wallet pages, one-time Ed25519 challenges, and fresh eligibility at login and renewal.
+- Native owner panel with supported-light selection, action selection, duration and invitations; no pasted HA tokens or duplicate proxy settings.
+- Owner-approved immutable wallet grants, HTTPS wallet signing, one-time session transfer to local HTTP, and fresh eligibility at login and renewal.
 - MIT license, pinned development dependencies, and tests using HA fixtures with actual temporary disk storage.
 
 Climate policy support remains in a later phase. Policy preview results are never authentication or dispatch authority.
@@ -52,9 +53,9 @@ uv run --locked ruff format --check custom_components tests examples
 node --test tests/frontend/*.test.mjs
 ```
 
-Tests include temporary loopback HTTP and verified HTTPS servers. A sandbox must permit localhost sockets.
+Tests include temporary loopback HTTP and verified HTTPS servers. A sandbox must permit localhost sockets. The optional browser flow check is `node tests/frontend/browser-check.mjs` with Playwright available in Node resolution and Chrome installed (or `CHROMIUM_CHANNEL` set). It uses isolated synthetic pages and does not contact your Home Assistant.
 
-For a disposable development HA installation, copy `custom_components/solbuddy_access` into the configuration directory's `custom_components` folder, restart HA, and add SOLBUDDY Access under Settings → Devices & services while signed in as the owner. Use the [owner WebSocket API examples](docs/phase-2.md) to manage grants. For guest enablement and the minimal interactive client, follow the [transport setup](docs/transports.md) and [Phase 3 workflow](docs/phase-3.md). For the bundled owner and guest wallet pages, follow the [wallet setup guide](docs/wallet-access.md). Removing the config entry retains storage for manual recovery; re-adding creates new empty storage and does not reactivate old grants.
+For a disposable development HA installation, copy `custom_components/solbuddy_access` into the configuration directory's `custom_components` folder, restart HA, and add SOLBUDDY Access under Settings → Devices & services while signed in as the owner. Open **SOLBUDDY Access** in the sidebar to manage grants with your existing HA login. For guest enablement and the minimal interactive client, follow the [transport setup](docs/transports.md) and [Phase 3 workflow](docs/phase-3.md). For the bundled owner and guest wallet pages, follow the [wallet setup guide](docs/wallet-access.md). Removing the config entry retains storage for manual recovery; re-adding creates new empty storage and does not reactivate old grants.
 
 ## Repository and validation
 

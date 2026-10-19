@@ -234,6 +234,8 @@ async def async_transport_policy(
     hass, options, *, require_local: bool = False
 ) -> TransportPolicy:
     """Refresh from HA's adapter state; detection failure disables local HTTP only."""
+    if options.get("connection_mode") == "ha":
+        return await ha_transport_policy(hass, options)
     networks = ()
     if (
         options.get("guest_enabled") is True
@@ -247,3 +249,150 @@ async def async_transport_policy(
     if policy.local_origin and not policy.local_networks and require_local:
         raise LocalNetworkUnavailable("No private HA network detected")
     return policy
+
+
+@dataclass(frozen=True)
+class HATransportPolicy(TransportPolicy):
+    """Use HA's trusted proxy middleware and owner-established origins."""
+
+    https_origins: tuple = ()
+    local_origins: tuple = ()
+
+    def check(self, request, ha_trusted=(), *, https_only=False, owner=False):
+        if remote.is_cloud_request.get() or request.transport is None:
+            raise AuthError(403, "transport_denied")
+        try:
+            peer = ip_address(request.transport.get_extra_info("peername")[0])
+            origin = validate_origin(
+                f"{request.scheme}://{request.host}", request.scheme
+            )
+        except ValueError, TypeError, IndexError:
+            raise AuthError(403, "transport_denied") from None
+        if request.scheme not in ("http", "https"):
+            raise AuthError(403, "transport_denied")
+        if len(request.headers.getall("Host", [])) != 1:
+            raise AuthError(403, "origin_denied")
+        origins = request.headers.getall("Origin", [])
+        if origins and origins != [origin]:
+            raise AuthError(403, "origin_denied")
+        if request.headers.get("Sec-Fetch-Site") == "cross-site":
+            raise AuthError(403, "origin_denied")
+        if request.query_string:
+            raise AuthError(400, "query_not_allowed")
+        trusted = any(peer in net for net in ha_trusted)
+        forwarded = any(
+            k in request.headers
+            for k in (
+                "X-Forwarded-For",
+                "X-Forwarded-Proto",
+                "X-Forwarded-Host",
+                "Forwarded",
+            )
+        )
+        if forwarded:
+            # HA already parsed the chain. Independently check that its selected
+            # client and scheme match; CF-specific headers grant no authority.
+            if not trusted or "Forwarded" in request.headers:
+                raise AuthError(403, "proxy_denied")
+            try:
+                clients = [
+                    ip_address(x.strip())
+                    for h in request.headers.getall("X-Forwarded-For", [])
+                    for x in h.split(",")
+                ][::-1]
+                index = next(
+                    (
+                        i
+                        for i, ip in enumerate(clients)
+                        if not any(ip in n for n in ha_trusted)
+                    ),
+                    len(clients) - 1,
+                )
+                client = clients[index]
+                protos = [
+                    x.strip()
+                    for h in request.headers.getall("X-Forwarded-Proto", [])
+                    for x in h.split(",")
+                ][::-1]
+                if len(protos) not in (1, len(clients)):
+                    raise ValueError
+                scheme = protos[0] if len(protos) == 1 else protos[index]
+                if (
+                    scheme != "https"
+                    or request.scheme != scheme
+                    or request.remote != str(client)
+                ):
+                    raise ValueError
+            except ValueError, IndexError:
+                raise AuthError(403, "proxy_denied") from None
+            source = str(client)
+        elif request.transport.get_extra_info("ssl_object") is not None:
+            if request.scheme != "https":
+                raise AuthError(403, "transport_denied")
+            source = str(peer)
+        else:
+            if https_only or trusted or request.scheme != "http":
+                raise AuthError(403, "local_http_denied")
+            if not owner and (
+                origin not in self.local_origins
+                or not any(peer in n for n in self.local_networks)
+            ):
+                raise AuthError(403, "local_http_denied")
+            source = str(peer)
+        if request.scheme == "https" and not owner and origin not in self.https_origins:
+            raise AuthError(403, "origin_denied")
+        return source
+
+
+async def ha_transport_policy(hass, options):
+    """Derive networks/URLs from HA; no second proxy allowlist."""
+    try:
+        adapters = await async_get_adapters(hass)
+        networks = adapter_networks(adapters)
+    except HomeAssistantError, OSError, ValueError, TypeError, KeyError:
+        adapters, networks = [], ()
+    https, local = [], set()
+    for value in (
+        hass.config.external_url,
+        options.get("learned_https_origin"),
+        options.get("guest_origin"),
+        hass.config.internal_url,
+    ):
+        if not value:
+            continue
+        try:
+            scheme = urlsplit(value).scheme
+            normalized = validate_origin(value, scheme)
+            if scheme == "https":
+                if normalized not in https:
+                    https.append(normalized)
+            elif scheme == "http":
+                local.add(normalized)
+        except ValueError:
+            continue
+    port = getattr(hass.config.api, "port", 8123) if hass.config.api else 8123
+    local.add(f"http://homeassistant.local:{port}")
+    for adapter in adapters:
+        if adapter.get("enabled") is True:
+            for info in adapter.get("ipv4", []):
+                try:
+                    ip = ip_address(info["address"])
+                    if any(ip in net for net in networks):
+                        local.add(f"http://{ip}:{port}")
+                except ValueError, KeyError:
+                    continue
+    return HATransportPolicy(
+        https_origin=https[0] if https else "",
+        local_origin="http://homeassistant.local:8123",
+        local_networks=networks,
+        https_origins=tuple(sorted(https)),
+        local_origins=tuple(sorted(local)),
+    )
+
+
+def check_https(policy, request, trusted):
+    if isinstance(policy, HATransportPolicy):
+        return policy.check(request, trusted, https_only=True)
+    return TransportPolicy(
+        https_origin=policy.https_origin, proxy_ips=policy.proxy_ips
+    ).check(request, trusted)

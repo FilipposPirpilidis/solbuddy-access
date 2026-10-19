@@ -13,7 +13,13 @@ from .auth import AuthError, GuestAccessDisabled
 from .grants import AccessDenied
 from .models import ValidationError
 from .storage import StorageUnavailable
-from .transport import TransportPolicy, async_transport_policy
+from .transport import (
+    HATransportPolicy,
+    TransportPolicy,
+    async_transport_policy,
+    check_https,
+    validate_origin,
+)
 
 BASE = "/api/solbuddy_access/v1"
 HEADERS = {
@@ -101,7 +107,7 @@ class GuestView(HomeAssistantView):
     async def _handle(self, request: web.Request) -> web.Response:
         try:
             runtime = self.hass.data.get(const.DOMAIN)
-            if runtime is None or not runtime.authenticator.enabled:
+            if runtime is None:
                 return response({"error": "not_found"}, 404)
             auth = runtime.authenticator
             policy = runtime.transport_policy or TransportPolicy(
@@ -111,6 +117,19 @@ class GuestView(HomeAssistantView):
                 policy = await async_transport_policy(
                     self.hass, runtime.transport_options
                 )
+            if self.operation == "wallet/owner":
+                return await self._owner(request, runtime, policy)
+            if self.operation == "wallet/info" and request.method == "GET":
+                policy.check(request, self.hass.http.trusted_proxies)
+                return response(
+                    {
+                        "guest_enabled": auth.enabled,
+                        "wallet_enabled": auth.wallet_enabled,
+                        "https_origin": policy.https_origin,
+                    }
+                )
+            if not auth.enabled:
+                return response({"error": "not_found"}, 404)
             source = policy.check(request, self.hass.http.trusted_proxies)
             auth.limit_source(source)
             expected = "GET" if self.operation == "permissions" else "POST"
@@ -121,44 +140,8 @@ class GuestView(HomeAssistantView):
                 # when ordinary guest commands explicitly permit local HTTP.
                 if not auth.wallet_enabled:
                     raise AuthError(404, "not_found")
-                TransportPolicy(
-                    https_origin=policy.https_origin, proxy_ips=policy.proxy_ips
-                ).check(request, self.hass.http.trusted_proxies)
-                if self.operation == "wallet/owner":
-                    user = request.get("hass_user")
-                    if user is None:
-                        raise AuthError()
-                    await runtime.manager.require_owner(user.id)
-                    data = await body(request)
-                    if (
-                        set(data) != {"operation", "payload"}
-                        or type(data["payload"]) is not dict
-                    ):
-                        raise AuthError(400, "invalid_request")
-                    payload = data["payload"]
-                    if data["operation"] == "create":
-                        if not payload.get("wallet_address"):
-                            raise AuthError(400, "wallet_required")
-                        return response(
-                            runtime.manager.describe(
-                                await runtime.manager.create(user.id, payload)
-                            )
-                        )
-                    if data["operation"] == "list" and not payload:
-                        return response(
-                            {
-                                "grants": [
-                                    runtime.manager.describe(g)
-                                    for g in runtime.storage.grants
-                                    if g.wallet_address
-                                ]
-                            }
-                        )
-                    if data["operation"] == "revoke" and set(payload) == {"grant_id"}:
-                        return response(
-                            await runtime.manager.revoke(user.id, payload["grant_id"])
-                        )
-                    raise AuthError(400, "invalid_request")
+                check_https(policy, request, self.hass.http.trusted_proxies)
+                signing_origin = validate_origin(f"https://{request.host}")
                 renewal = self.operation in {"wallet/renew-challenge", "wallet/renew"}
                 if not renewal:
                     item = auth._lookup(
@@ -174,7 +157,7 @@ class GuestView(HomeAssistantView):
                         data = await body(request)
                         if self.operation == "wallet/challenge" and not data:
                             return response(
-                                auth.challenge(item, policy.https_origin, renewal=False)
+                                auth.challenge(item, signing_origin, renewal=False)
                             )
                         if self.operation == "wallet/verify" and set(data) == {
                             "signature"
@@ -182,7 +165,7 @@ class GuestView(HomeAssistantView):
                             return response(
                                 await auth.wallet_verify(
                                     item,
-                                    policy.https_origin,
+                                    signing_origin,
                                     data["signature"],
                                     renewal=False,
                                 )
@@ -196,18 +179,23 @@ class GuestView(HomeAssistantView):
                     data = await body(request)
                     if self.operation == "wallet/renew-challenge" and not data:
                         return response(
-                            auth.challenge(item, policy.https_origin, renewal=True)
+                            auth.challenge(item, signing_origin, renewal=True)
                         )
                     if self.operation == "wallet/renew" and set(data) == {"signature"}:
                         return response(
                             await auth.wallet_verify(
                                 item,
-                                policy.https_origin,
+                                signing_origin,
                                 data["signature"],
                                 renewal=True,
                             )
                         )
                     raise AuthError(400, "invalid_request")
+            if self.operation == "session/claim":
+                code = credential(request, "SolbuddyTransfer")
+                if await body(request):
+                    raise AuthError(400, "invalid_request")
+                return response(await auth.claim(code))
             if self.operation == "invitations":
                 user = request.get("hass_user")
                 if user is None:
@@ -228,6 +216,10 @@ class GuestView(HomeAssistantView):
             async with auth.request(token, sequence(request)) as session:
                 data = await body(request)
                 auth.assert_live(session)
+                if self.operation == "session/transfer":
+                    if data:
+                        raise AuthError(400, "invalid_request")
+                    return response(auth.transfer(session))
                 if self.operation == "session/renew":
                     if data:
                         raise AuthError(400, "invalid_request")
@@ -284,16 +276,80 @@ class GuestView(HomeAssistantView):
             # Never forward raw body/header/exception values into HA logging.
             return response({"error": "unavailable"}, 503)
 
+    async def _owner(self, request, runtime, policy):
+        if request.method != "POST":
+            raise AuthError(405, "method_not_allowed")
+        user = request.get("hass_user")
+        if user is None:
+            raise AuthError()
+        await runtime.manager.require_owner(user.id)
+        if isinstance(policy, HATransportPolicy):
+            policy.check(request, self.hass.http.trusted_proxies, owner=True)
+        else:
+            policy.check(request, self.hass.http.trusted_proxies)
+        data = await body(request)
+        if set(data) != {"operation", "payload"} or type(data["payload"]) is not dict:
+            raise AuthError(400, "invalid_request")
+        payload, operation = data["payload"], data["operation"]
+        await runtime.manager.require_owner(user.id)
+        if operation == "status" and not payload:
+            if isinstance(policy, HATransportPolicy) and request.scheme == "https":
+                origin = validate_origin(f"https://{request.host}")
+                entries = self.hass.config_entries.async_entries(const.DOMAIN)
+                if entries:
+                    options = dict(entries[0].options) | {
+                        "connection_mode": "ha",
+                        "learned_https_origin": origin,
+                    }
+                    if options != entries[0].options:
+                        self.hass.config_entries.async_update_entry(
+                            entries[0], options=options
+                        )
+                    runtime.transport_options = options
+                policy = await async_transport_policy(
+                    self.hass, runtime.transport_options or {"connection_mode": "ha"}
+                )
+            entities = []
+            for state in self.hass.states.async_all("light"):
+                if runtime.manager.executor.snapshot(state.entity_id) is not None:
+                    entities.append({"entity_id": state.entity_id, "name": state.name})
+            return response(
+                {
+                    "guest_enabled": runtime.authenticator.enabled,
+                    "wallet_enabled": runtime.authenticator.wallet_enabled,
+                    "https_origin": policy.https_origin,
+                    "entities": entities,
+                }
+            )
+        if operation == "create":
+            if not payload.get("wallet_address"):
+                raise AuthError(400, "wallet_required")
+            return response(
+                runtime.manager.describe(await runtime.manager.create(user.id, payload))
+            )
+        if operation == "list" and not payload:
+            return response(
+                {
+                    "grants": [
+                        runtime.manager.describe(g) for g in runtime.storage.grants
+                    ]
+                }
+            )
+        if operation == "revoke" and set(payload) == {"grant_id"}:
+            return response(await runtime.manager.revoke(user.id, payload["grant_id"]))
+        raise AuthError(400, "invalid_request")
+
 
 def register(hass: HomeAssistant) -> None:
-    if not const.GUEST_TRANSPORT_VERIFIED:
-        raise GuestAccessDisabled("Guest transport security gate is closed")
     if hass.data.get("solbuddy_access_guest_registered"):
         return
     for operation in (
         "invitations",
         "session",
         "session/renew",
+        "session/transfer",
+        "session/claim",
+        "wallet/info",
         "permissions",
         "check",
         "execute",

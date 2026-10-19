@@ -450,7 +450,7 @@ async def test_https_wallet_ui_owner_and_guest_flow(
     assert token not in await page.text()
     assert (await tls_client.get(BASE + "/wallet/client.js")).status == 200
     auth.wallet_enabled = False
-    assert (await tls_client.get(BASE + "/wallet/ui")).status == 404
+    assert (await tls_client.get(BASE + "/wallet/ui")).status == 200
     assert (
         await tls_client.post(BASE + "/wallet/challenge", headers=guest, json={})
     ).status == 404

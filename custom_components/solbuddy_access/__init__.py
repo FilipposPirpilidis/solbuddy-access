@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from homeassistant.components.frontend import async_remove_panel
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
@@ -61,7 +62,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolbuddyConfigEntry) -> 
     manager = GrantManager(hass, storage, audit, LightExecutor(hass))
     enabled = entry.options.get("guest_enabled", False) is True
     try:
-        policy = await async_transport_policy(hass, entry.options)
+        policy = await async_transport_policy(
+            hass, dict(entry.options) | {"connection_mode": "ha"}
+        )
     except ValueError:
         raise ConfigEntryError("Invalid guest transport options") from None
     wallet_enabled = enabled and entry.options.get("wallet_enabled", False) is True
@@ -84,12 +87,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolbuddyConfigEntry) -> 
         installation_id=entry.data["storage_id"],
     )
     entry.runtime_data = RuntimeData(
-        storage, authenticator, manager, policy.https_origin, policy, entry.options
+        storage,
+        authenticator,
+        manager,
+        policy.https_origin,
+        policy,
+        dict(entry.options) | {"connection_mode": "ha"},
     )
     hass.data[DOMAIN] = entry.runtime_data
     register(hass)
-    if authenticator.enabled:
-        guest_api.register(hass)
+    guest_api.register(hass)
+    from .wallet_ui import register_panel
+
+    await register_panel(hass)
+    entry.async_on_unload(
+        lambda: async_remove_panel(hass, "solbuddy-access", warn_if_unknown=False)
+    )
     entry.async_on_unload(storage.close)
     return True
 
