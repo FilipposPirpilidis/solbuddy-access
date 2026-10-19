@@ -7,7 +7,7 @@ let wallets = [], session = null, connected = null, allowed = [];
 const https = location.protocol === 'https:';
 const errors = {eligibility_stale:'Price or balance observation is stale. No new session was issued.',eligibility_expired:'The eligibility check expired before the session could be issued. Sign in again for a fresh check.',eligibility_unavailable:'Fresh pricing or balance is unavailable. Try again later.',insufficient_sbud:'This wallet holds less than US$2 of SBUD.',invalid_wallet_proof:'Wallet proof expired or does not match the approved wallet.',unauthorized:'Invitation, transfer code, or session is invalid or expired.'};
 function status(text) {$('status').textContent=text;}
-function forget() {session=null;connected=null;$('controls').hidden=true;$('invitation').value='';$('transferCode').value='';$('issuedTransfer').value='';$('transferOutput').hidden=true;}
+function forget() {session=null;connected=null;$('controls').hidden=true;allowed=[];$('walletStatus').textContent='';$('result').textContent='';$('invitation').value='';$('transferCode').value='';$('issuedTransfer').value='';$('transferOutput').hidden=true;}
 async function call(path, auth=null, data={}, seq=null, method='POST') {
   const headers = {'Content-Type':'application/json'};
   if(auth) headers.Authorization=auth;
@@ -16,10 +16,10 @@ async function call(path, auth=null, data={}, seq=null, method='POST') {
   try {response=await fetch(base+path,{method,headers,body:method==='GET'?undefined:JSON.stringify(data),cache:'no-store',credentials:'omit',redirect:'error'});}
   catch {forget();throw new Error('Connection failed. Do not repeat uncertain device commands.');}
   const result=await response.json();
-  if(!response.ok) {if(session) forget();throw new Error(freshnessMessage(result)||errors[result.error]||`Request denied (${response.status}): ${result.error||''}`);}
+  if(!response.ok) {if(session) forget();if((path==='wallet/verify'||path==='wallet/renew') && result.preview?.wallet_verified===true && result.preview.controls_enabled===false) showPreview(result.preview);throw new Error(freshnessMessage(result)||errors[result.error]||`Request denied (${response.status}): ${result.error||''}`);}
   return result;
 }
-function setSession(value) {session={token:value.session_token,next:value.next_sequence};$('controls').hidden=false;$('expiry').textContent='Session expires: '+value.expires_at;}
+function setSession(value) {$('walletStatus').textContent='Guest session active — eligibility passed.';session={token:value.session_token,next:value.next_sequence};$('controls').hidden=false;$('expiry').textContent='Session expires: '+value.expires_at;}
 async function sessionCall(path,data={},method='POST') {
   if(!session) throw new Error('Sign in or import a session first.');
   return call(path,'SolbuddySession '+session.token,data,session.next++,method);
@@ -32,19 +32,31 @@ function refresh() {
 }
 function buttons() {
   const policy=allowed.find(p=>p.entity_id===$('entity').value);
-  for(const action of ['turn_on','turn_off']) $(action).disabled=!policy?.actions.includes(action);
+  for(const action of ['turn_on','turn_off']) $(action).disabled=!session || !policy?.actions.includes(action);
   $('renew').hidden=!https;
+  for(const id of ['permissions','renew','transfer']) $(id).disabled=!session;
 }
-async function permissions() {
-  const result=await sessionCall('permissions',{},'GET');allowed=result.policies;
+function showPolicies(policies) {
+  allowed=policies;
   $('entity').replaceChildren(...allowed.map(p=>new Option(p.entity_id,p.entity_id)));
   $('result').textContent=allowed.map(p=>p.entity_id+': '+p.actions.map(a=>a.replaceAll('_',' ')).join(', ')).join('\n');buttons();
+}
+function showPreview(preview) {
+  session=null;
+  $('controls').hidden=false;
+  $('walletStatus').textContent='Wallet verified. Approved access is shown below, but controls are disabled until the fresh-price $2 check passes.';
+  $('expiry').textContent='Grant expires: '+preview.grant_expires_at;
+  showPolicies(preview.policies);
+}
+async function permissions() {
+  const result=await sessionCall('permissions',{},'GET');showPolicies(result.policies);
 }
 const actions={refresh,permissions,
   async login() {
     if(!https) throw new Error('Open HTTPS to sign with your wallet.');
     if($('wallet').value==='') throw new Error('Select a wallet.');
     const invitation=$('invitation').value.trim();
+    session=null;allowed=[];$('controls').hidden=true;$('walletStatus').textContent='';$('result').textContent='';
     connected=await wallets[Number($('wallet').value)].connect();
     const challenge=await call('wallet/challenge','SolbuddyInvite '+invitation);
     if(connected.address!==challenge.wallet_address) throw new Error('Selected account does not match the owner-approved wallet.');

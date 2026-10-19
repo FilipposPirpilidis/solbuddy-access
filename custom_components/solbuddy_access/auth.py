@@ -40,6 +40,38 @@ class AuthError(PermissionError):
         return {"error": self.code}
 
 
+class VerifiedPreviewError(AuthError):
+    """Read-only grant snapshot after proof; never an execution credential."""
+
+    def __init__(self, error: AuthError, grant):
+        super().__init__(error.status, error.code)
+        self.data = error.response_data() | {
+            "preview": {
+                "wallet_verified": True,
+                "controls_enabled": False,
+                "grant_expires_at": grant.expires_at.isoformat(),
+                "policies": [
+                    {
+                        key: value
+                        for key, value in policy.to_dict().items()
+                        if key
+                        in {
+                            "entity_id",
+                            "actions",
+                            "brightness_min",
+                            "brightness_max",
+                            "turn_on_brightness",
+                        }
+                    }
+                    for policy in grant.policies
+                ],
+            }
+        }
+
+    def response_data(self) -> dict:
+        return self.data
+
+
 @dataclass(slots=True)
 class Bucket:
     capacity: float
@@ -344,36 +376,58 @@ class GuestAuthenticator:
             )
         except ValueError, InvalidSignature:
             raise AuthError(401, "invalid_wallet_proof") from None
-        # Never hold the grant/revoke gate while querying remote providers.
-        evidence = await self.eligibility.verify(grant.wallet_address, self.manager.now)
-        async with self.manager._gate(item.grant_id):
-            self.assert_live(item, records)
-            evidence.check(grant.wallet_address, self.manager.now().timestamp())
-            if (
-                self.manager.now() >= challenge.expires_at
-                or monotonic() >= challenge.deadline
-            ):
-                raise AuthError(401, "invalid_wallet_proof")
-            await self.manager.audit.append(
-                "session_rotated" if renewal else "session_issued",
-                item.grant_id,
-                self.manager.now(),
+        try:
+            # Never hold the grant/revoke gate while querying remote providers.
+            evidence = await self.eligibility.verify(
+                grant.wallet_address, self.manager.now
             )
-            self.assert_live(item, records)
-            evidence.check(grant.wallet_address, self.manager.now().timestamp())
-            if (
-                self.manager.now() >= challenge.expires_at
-                or monotonic() >= challenge.deadline
-            ):
-                raise AuthError(401, "invalid_wallet_proof")
-            token, replacement = self._new(item.grant_id, "sbas_", 900)
-            if renewal:
-                replacement.limiter = item.limiter
-            else:
-                self._invitations.pop(item.grant_id)
-            self._sessions[item.grant_id] = replacement
-            self._challenges.pop(item.grant_id, None)
-            return self._response(token, replacement)
+            async with self.manager._gate(item.grant_id):
+                self.assert_live(item, records)
+                evidence.check(grant.wallet_address, self.manager.now().timestamp())
+                if (
+                    self.manager.now() >= challenge.expires_at
+                    or monotonic() >= challenge.deadline
+                ):
+                    raise AuthError(401, "invalid_wallet_proof")
+                await self.manager.audit.append(
+                    "session_rotated" if renewal else "session_issued",
+                    item.grant_id,
+                    self.manager.now(),
+                )
+                self.assert_live(item, records)
+                evidence.check(grant.wallet_address, self.manager.now().timestamp())
+                if (
+                    self.manager.now() >= challenge.expires_at
+                    or monotonic() >= challenge.deadline
+                ):
+                    raise AuthError(401, "invalid_wallet_proof")
+                token, replacement = self._new(item.grant_id, "sbas_", 900)
+                if renewal:
+                    replacement.limiter = item.limiter
+                else:
+                    self._invitations.pop(item.grant_id)
+                self._sessions[item.grant_id] = replacement
+                self._challenges.pop(item.grant_id, None)
+                return self._response(token, replacement)
+        except AuthError as error:
+            if error.code not in {
+                "eligibility_stale",
+                "eligibility_expired",
+                "eligibility_unavailable",
+                "insufficient_sbud",
+            }:
+                raise
+            # Recheck after provider/audit awaits before disclosing any policies.
+            async with self.manager._gate(item.grant_id):
+                self.assert_live(item, records)
+                if (
+                    self.manager.now() >= challenge.expires_at
+                    or monotonic() >= challenge.deadline
+                ):
+                    raise AuthError(401, "invalid_wallet_proof") from None
+                raise VerifiedPreviewError(
+                    error, self.manager.get(item.grant_id)
+                ) from None
 
     def transfer(self, item):
         """One short-lived handoff per grant; cannot extend wallet eligibility."""

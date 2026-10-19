@@ -630,6 +630,9 @@ async def test_freshness_details_reach_guest_after_wallet_proof(
     assert data["error"] == "eligibility_stale"
     assert data["observations"]["price"]["age_seconds"] >= 62500
     assert data["observations"]["balance"]["age_seconds"] >= 95
+    assert data["preview"]["policies"][0]["entity_id"] == "light.guest_room"
+    assert data["preview"]["controls_enabled"] is False
+    assert "session_token" not in data
     assert not auth._sessions
     for secret in (invite["invitation"], signature, address(key)):
         assert secret not in str(data)
@@ -640,3 +643,92 @@ async def test_freshness_details_reach_guest_after_wallet_proof(
     )
     assert result.status == 401
     assert "observations" not in await result.json()
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "eligibility_stale",
+        "eligibility_unavailable",
+        "eligibility_expired",
+        "insufficient_sbud",
+    ],
+)
+async def test_verified_wallet_preview_never_authorizes(wallet_setup, key, code):
+    from custom_components.solbuddy_access.auth import VerifiedPreviewError
+
+    auth, grant, invite, item, service = wallet_setup
+    service.verify.side_effect = AuthError(
+        403 if code == "insufficient_sbud" else 503, code
+    )
+    proof = sign(key, auth.challenge(item, ORIGIN, renewal=False))
+    with pytest.raises(VerifiedPreviewError) as failure:
+        await auth.wallet_verify(item, ORIGIN, proof, renewal=False)
+    data = failure.value.response_data()
+    preview = data["preview"]
+    assert data["error"] == code
+    assert preview["wallet_verified"] is True
+    assert preview["controls_enabled"] is False
+    assert preview["grant_expires_at"] == grant.expires_at.isoformat()
+    assert preview["policies"][0]["entity_id"] == "light.guest_room"
+    assert preview["policies"][0]["actions"] == grant.policies[0].to_dict()["actions"]
+    assert not (
+        {"registry_id", "integration_id", "wallet_address"}
+        & set(preview["policies"][0])
+    )
+    assert "session_token" not in data
+    assert not auth._sessions
+    # Neither the invitation nor a preview can be used as a device session.
+    for value in (invite["invitation"], preview):
+        with pytest.raises(AuthError):
+            async with auth.request(value, 1):
+                pytest.fail("Preview authorized execution")
+    with pytest.raises(AuthError) as replay:
+        await auth.wallet_verify(item, ORIGIN, proof, renewal=False)
+    assert "preview" not in replay.value.response_data()
+    # A fresh signature and qualifying eligibility can still issue a real session.
+    service.verify.side_effect = lambda wallet, now: Evidence(
+        wallet, int(now().timestamp()), int(now().timestamp()), monotonic() + 30
+    )
+    proof = sign(key, auth.challenge(item, ORIGIN, renewal=False))
+    result = await auth.wallet_verify(item, ORIGIN, proof, renewal=False)
+    assert result["session_token"]
+
+
+async def test_revoked_during_failed_eligibility_has_no_preview(
+    wallet_setup, key, hass_owner_user
+):
+    auth, grant, invite, item, service = wallet_setup
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def unavailable(*args):
+        entered.set()
+        await release.wait()
+        raise AuthError(503, "eligibility_unavailable")
+
+    service.verify.side_effect = unavailable
+    proof = sign(key, auth.challenge(item, ORIGIN, renewal=False))
+    task = asyncio.create_task(auth.wallet_verify(item, ORIGIN, proof, renewal=False))
+    await entered.wait()
+    await auth.manager.revoke(hass_owner_user.id, grant.grant_id)
+    release.set()
+    with pytest.raises(AuthError) as failure:
+        await task
+    assert "preview" not in failure.value.response_data()
+    assert not auth._sessions
+
+
+async def test_expired_proof_has_no_preview_after_provider_failure(wallet_setup, key):
+    auth, grant, invite, item, service = wallet_setup
+    proof = sign(key, auth.challenge(item, ORIGIN, renewal=False))
+    challenge = auth._challenges[grant.grant_id]
+
+    async def unavailable(*args):
+        challenge.deadline = 0
+        raise AuthError(503, "eligibility_unavailable")
+
+    service.verify.side_effect = unavailable
+    with pytest.raises(AuthError) as failure:
+        await auth.wallet_verify(item, ORIGIN, proof, renewal=False)
+    assert failure.value.code == "invalid_wallet_proof"
+    assert "preview" not in failure.value.response_data()

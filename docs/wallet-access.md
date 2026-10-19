@@ -1,4 +1,4 @@
-# Wallet access — 0.1.0.dev8
+# Wallet access — 0.1.0.dev9
 
 SOLBUDDY now appears in the Home Assistant sidebar and uses your existing HA login. There is no owner-token field and no second proxy/origin configuration. Guest and wallet access both default off. Only the active HA owner can administer grants; other administrators are denied server-side.
 
@@ -49,3 +49,9 @@ Automated tests use real HA HTTP/auth/forwarded middleware, real Ed25519 signatu
 After a valid wallet proof, a failed freshness check now identifies **price**, **balance**, or both, with each failing observation's age and allowed maximum. For example: “Price observation is stale: 17h 16m old (maximum 5m)” or “Balance observation is stale: 1m 32s old (maximum 1m)”. Ages describe source observations, not HTTP fetch time, and reflect the server check time rather than a live counter. Displayed seconds round away from zero; authorization uses the exact age.
 
 Future timestamps are labeled as ahead of the server clock and remain rejected. If both observations are fresh but the short-lived eligibility check expires during processing, the message instead says the eligibility check expired. No new session is issued in any of these cases. The US$2 minimum and freshness thresholds are unchanged. Error responses contain only status/age/limit metadata, never wallet balances, addresses, signatures, provider keys or raw provider responses.
+
+## Approved-access preview (dev9)
+
+After the approved wallet signs a valid challenge, an eligibility failure now shows the permitted entity IDs, actions, and **grant expiry** alongside “Wallet verified”. The existing price/balance diagnostic explains why controls are disabled. No session token is issued. Device commands, renewal, transfer and session-permission requests remain disabled until eligibility succeeds. If both checks pass, normal guest controls become available.
+
+This is a read-only snapshot at verification time, not a live authorization or session. It can remain visible after later owner changes; every actual operation still requires a live eligible session and current grant checks. Invalid signatures, expired/replayed proofs, revoked/expired grants and invalid credentials receive no preview. Retry **Connect and sign in** with a fresh signature while the invitation is valid; after its five-minute expiry, obtain a new invitation. The US$2 requirement and fresh-price limits are unchanged.

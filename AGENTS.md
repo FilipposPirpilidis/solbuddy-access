@@ -2,7 +2,7 @@
 
 ## Current scope
 
-The user requested precise wallet freshness diagnostics: identify stale price versus stale balance and show observation age. Preserve the US$2 gate, 300-second price maximum, 60-second balance maximum, future-observation rejection, and default-off guest/wallet access. The user authorized committing and pushing the freshness diagnostics fix. Deployment remains outside scope. Return only safe age/status metadata after valid wallet proof, never balances, credentials, wallets, raw provider data or keys.
+The user authorized showing a read-only snapshot of permitted entities/actions/grant expiry after valid wallet proof even when eligibility fails. Keep controls disabled and issue no session until the US$2 minimum and fresh observations pass. Preserve default-off access. Recheck live grant, credential and proof deadline before disclosing the snapshot; never disclose it for invalid signatures, revoked grants or anonymous requests. The user authorized committing and pushing the guest preview changes. Deployment remains outside scope.
 
 ## Architecture
 
@@ -70,3 +70,7 @@ Version 0.1.0.dev7: full Python regression suite passed 307 tests with 91% cover
 ## Freshness diagnostics validation
 
 Version 0.1.0.dev8: 316 Python regression tests, 11 Node tests and four isolated Chrome browser flows passed. Ruff, locked dependency sync and HA manifest-only validation passed. HTTP tests verify age/status details after a valid signature, no session issuance on stale evidence, and no credentials/addresses in diagnostic responses or captured logs. Exact age limits, simultaneous stale observations, future observations, and expired evidence remain denied. US$2 valuation, default-off flags and provider selection are unchanged. Validation preceded the user-authorized commit and push. No production update is included.
+
+## Verified-wallet approved-access preview validation
+
+Version 0.1.0.dev9: 322 Python regression tests, 11 Node tests and four isolated Chrome flows passed, along with Ruff, locked dependency sync and HA manifest-only validation. Valid wallet proofs with failed eligibility expose only a read-only policy/expiry snapshot. Tests cover stale/unavailable/expired eligibility, insufficient holdings, no execution credentials, replay, revocation during failed provider IO, expired proof, successful later eligibility, and browser-visible disabled controls. The US$2 gate, freshness rejection and default-off flags are unchanged. Validation preceded the user-authorized commit and push. No production update is included.

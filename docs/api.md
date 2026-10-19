@@ -87,3 +87,10 @@ POST `/session/transfer` uses the current session authorization and next sequenc
 ## Freshness error details (0.1.0.dev8)
 
 HTTP 503 `eligibility_stale` retains its existing code and adds `observations.price` and `observations.balance`. Each contains only `status` (`fresh`, `stale`, `future`), integer `age_seconds` (negative for future observations), and `max_age_seconds` (300 price / 60 balance). These diagnostics are returned only after successful wallet proof and eligibility evaluation, including final rechecks before issuance/renewal. Both observations can fail simultaneously. `eligibility_expired` means the 30-second evidence deadline expired while source observations were still fresh; it has no observation details. Invalid identity or malformed provider data remains a generic unavailable error. Existing no-store headers apply.
+
+
+## Verified-wallet preview (0.1.0.dev9)
+
+After a valid Ed25519 wallet proof, errors `eligibility_stale`, `eligibility_expired`, `eligibility_unavailable` and `insufficient_sbud` retain their existing HTTP status and safe diagnostics, and may add `preview`: `{wallet_verified: true, controls_enabled: false, grant_expires_at: <ISO timestamp>, policies: [...]}`. Policies include only the same entity/action/parameter-limit fields exposed by guest permissions, never registry identifiers or wallet/credential data. The grant expiry is distinct from a session expiry; no session is created by this response.
+
+The server rechecks the original credential, grant, storage/audit health and proof deadline under the grant gate after any provider/audit awaits before disclosing this snapshot. Wrong/replayed proofs and revoked/expired state get no preview. Clients must not treat the preview as authorization: existing session credentials remain mandatory for all commands. Retrying requires a new challenge/signature and the existing valid invitation or session.

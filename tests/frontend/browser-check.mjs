@@ -61,7 +61,7 @@ try {
     if(['client.js','connectors.js','freshness.js','wallet.css'].includes(filename)) return route.fulfill({contentType:filename.endsWith('.js')?'application/javascript':'text/css',body:await readFile(new URL(filename,assets),'utf8')});
     if(filename==='ui') return route.fulfill({contentType:'text/html',body:await readFile(new URL('wallet.html',assets),'utf8')});
     if(filename==='challenge') return route.fulfill({contentType:'application/json',body:JSON.stringify({wallet_address:'synthetic-wallet',message:'Synthetic signed challenge'})});
-    if(filename==='verify') return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'eligibility_stale',observations:{price:{status:'stale',age_seconds:62160,max_age_seconds:300},balance:{status:'fresh',age_seconds:5,max_age_seconds:60}}})});
+    if(filename==='verify') return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'eligibility_stale',preview:{wallet_verified:true,controls_enabled:false,grant_expires_at:'2030-01-01T12:00:00Z',policies:[{entity_id:'light.test',actions:['turn_on']}]},observations:{price:{status:'stale',age_seconds:62160,max_age_seconds:300},balance:{status:'fresh',age_seconds:5,max_age_seconds:60}}})});
     const response=filename==='info'?{guest_enabled:true,wallet_enabled:true,https_origin:'https://fphomebuddy.uk'}:filename==='claim'?{session_token:'synthetic-session',next_sequence:1,expires_at:'test expiry'}:filename==='permissions'?{policies:[{entity_id:'light.test',actions:['turn_on']}]}:{outcome:'dispatched'};
     return route.fulfill({contentType:'application/json',body:JSON.stringify(response)});
   });
@@ -86,7 +86,12 @@ try {
   await guest.locator('#wallet').selectOption({label:'Phantom'});
   await guest.getByRole('button',{name:'Connect and sign in'}).click();
   await guest.getByText('Price observation is stale: 17h 16m old (maximum 5m). No new session was issued. The $2 SBUD requirement is unchanged.').waitFor();
-  assert(await guest.locator('#controls').isHidden());
+  assert(await guest.locator('#controls').isVisible());
+  await guest.getByText('Grant expires: 2030-01-01T12:00:00Z').waitFor();
+  assert.equal(await guest.locator('#entity').inputValue(),'light.test');
+  assert.match(await guest.locator('#result').textContent(),/light.test: turn on/);
+  assert.match(await guest.locator('#walletStatus').textContent(),/Wallet verified/);
+  for(const id of ['turn_on','turn_off','renew','transfer','permissions']) assert(await guest.locator('#'+id).isDisabled());
   assert.deepEqual(errors,[]);checks++;
   console.log(`${checks} browser flows passed: disabled/native owner panel, create/invite/revoke, local session import and scoped controls, signed-login stale-price diagnostics.`);
 } finally {await browser.close();}
