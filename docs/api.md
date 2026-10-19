@@ -18,7 +18,7 @@ Server-owned fields are forbidden in input. No administrative command accepts an
 
 ## Local guest authentication
 
-Use random capability credentials rather than passwords or HA tokens. Phase 3 implements and tests this lifecycle. TLS is mandatory, including on a LAN. Phase 3 supports direct HA HTTPS only and rejects forwarded headers; TLS-terminating proxies are unsupported. No port forwarding or public deployment is part of v0.1 setup.
+Use random capability credentials rather than passwords or HA tokens. Phase 3 implements and tests this lifecycle. TLS is the default; local HTTP requires a separate owner opt-in and explicit private client CIDRs. The current transport supports direct HTTPS, explicitly trusted single-hop proxy HTTPS, and opt-in local HTTP. See [transport configuration and trust boundaries](transports.md). No port forwarding or public deployment is part of v0.1 setup.
 
 1. The authenticated owner creates a random 256-bit invitation for one currently active grant, expiring in five minutes. Only its SHA-256 digest is held in memory. The owner transfers it through a trusted channel; no URLs, QR query parameters, logs, or browser history contain the credential.
 2. The guest presents the invitation in an authorization header to `POST /api/solbuddy_access/v1/session`. This is credential authentication, not an anonymous session-creation endpoint. Atomically consume the invitation under the grant gate. Recheck grant activity and storage health. Return a fresh random 256-bit opaque session token once with `Cache-Control: no-store`.
@@ -50,7 +50,7 @@ Execution payload example:
 }
 ```
 
-No grant ID, service name, template, target array, device ID, or raw HA data is accepted. Validate strict object shape and size before expensive work. Implemented limits: 8 KiB bodies, bounded header lengths, one in-flight operation/session, 30 requests/minute/session with burst 5, and a bounded global limiter for authentication attempts. Source-IP limits supplement global/session limits but never establish identity; forwarded addresses are rejected in Phase 3. Keep limiter maps bounded and use monotonic time.
+No grant ID, service name, template, target array, device ID, or raw HA data is accepted. Validate strict object shape and size before expensive work. Implemented limits: 8 KiB bodies, bounded header lengths, one in-flight operation/session, 30 requests/minute/session with burst 5, and a bounded global limiter for authentication attempts. Source-IP limits supplement global/session limits but never establish identity; forwarded addresses are accepted only through the validated trusted-proxy path. Keep limiter maps bounded and use monotonic time.
 
 Consume sequences even on denied actions; do not replay on timeout. Return a bounded receipt with outcome `dispatched`, `denied`, or `unknown`; HA accepting a service call is not proof the physical device changed. Missing/invalid credentials return generic 401; invalid input 400, denied active-session operations 403, sequence conflicts 409, limits 429, and unavailable security dependencies 503. Error bodies must not disclose other grants/entities. An expired/revoked session receives 401 without explaining grant existence.
 

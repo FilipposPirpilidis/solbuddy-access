@@ -2,7 +2,7 @@
 
 ## Current scope
 
-The user approved Phase 3: implement secure invitation exchange, scoped short-lived sessions, renewal, replay protection, rate limits, HTTPS guest transport, and security tests. The authentication/TLS/owner-options suite passed before opening the source registration gate. Keep guest runtime access off by default and preserve the security tests. Preserve owner-only administration and the existing execution checks. Guest access must default off and require explicit owner configuration of an HTTPS origin. The user authorized committing and pushing Phase 3 to the selected repository with guest access disabled by default. Deployment, climate adapters, wallet integration, and production guest enablement remain outside this request. The Phase 2 commit is already pushed to https://github.com/FilipposPirpilidis/solbuddy-access.
+The user approved implementing local HTTP guest credentials/commands alongside remote HTTPS. Preserve default-off guest access and add a separate explicit local HTTP opt-in with exact origin and private client CIDRs. Support direct HTTPS and a single proxy hop trusted by both HA and SOLBUDDY. Keep all guest authentication, grants, revocation, replay protection, audit and device checks intact. Wallet/coin requirements, deployment, and production configuration changes are outside this request. The user authorized committing and pushing this transport update to https://github.com/FilipposPirpilidis/solbuddy-access, keeping guest access and local HTTP disabled by default. Update documentation and tests for the expanded transport scope.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ The user approved Phase 3: implement secure invitation exchange, scoped short-li
 - Store only light policies; climate remains denied until Phase 4. There is no WebSocket execute command or integration HA service. Guest execution requires a server-bound, live session rechecked at final dispatch.
 - Invitations and sessions use distinct 256-bit random credentials and only SHA-256 digests in volatile memory. Invalidate on revocation, replacement, restart, reload, and disabling access. Never persist credentials.
 - Use an owner-authenticated HTTP invitation endpoint, not a secret-bearing WebSocket response: the pinned HA WebSocket debug logger logs outgoing message bodies.
-- Phase 3 initially requires direct TLS to HA, an exact configured origin/Host, no cross-origin access, bounded input, and serialized request sequences. Do not trust forwarded headers as proof of TLS.
+- Require exact configured origin/Host, no cross-origin access, bounded input, and serialized sequences. Local HTTP requires explicit private CIDRs and must reject all known proxy peers. Proxied HTTPS requires an exact configured peer, HA trust, single-client forwarding, and HA-validated scheme/remote; never trust arbitrary forwarded headers. Reject HA Cloud requests and multi-hop chains until separately reviewed.
 - Use the selected GitHub repository's README as the documentation URL. Report the exact validation performed; do not equate a manifest-only check with the full hassfest suite.
 - Enrollment must resolve registry/config-entry/device identity server-side and verify an explicitly reviewed physical light implementation. Never accept registry IDs or trusted-device flags from API input.
 - Do not block the event loop. Use HA lifecycle helpers and unload callbacks; clean up timers and in-memory sessions.
@@ -49,3 +49,7 @@ The user approved Phase 3: implement secure invitation exchange, scoped short-li
 ## Phase 3 validation baseline
 
 On 2026-10-19, the full suite passed 191 tests with 92% integration coverage; Ruff and the official HA 2026.10.2 manifest-only validator passed. The authentication/HTTPS/options suite passed before `GUEST_TRANSPORT_VERIFIED` was opened. Preserve default-off owner options and credential invalidation. See `docs/phase-3.md` for protocol, client workflow, supported direct-TLS topology, and remaining real-device/full-hassfest release checks.
+
+## Dual-transport validation baseline
+
+Local HTTP / single-hop proxy HTTPS follow-up: 229 tests passed with 92% integration coverage, plus Ruff and manifest-only validation. See `docs/transports.md` for owner setup, exact proxy header contract, plaintext limitations, and unsupported multi-hop/Cloud transports. Guest access and local HTTP remain default-off.

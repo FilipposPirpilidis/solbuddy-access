@@ -20,15 +20,19 @@
     "step": {
       "init": {
         "title": "Guest access",
-        "description": "Requires direct HTTPS to Home Assistant at the exact origin below. TLS-terminating proxies are not supported. Disabling or reloading invalidates every guest credential.",
+        "description": "Guest access defaults off. HTTPS can be direct or through an explicitly trusted proxy. Optional local HTTP sends credentials and commands without encryption; allow only your private LAN subnet. Reloading invalidates all guest credentials.",
         "data": {
           "guest_enabled": "Enable guest access",
-          "guest_origin": "HTTPS origin (for example https://ha.example:8123)"
+          "guest_origin": "HTTPS origin (optional when local HTTP is enabled)",
+          "local_http_enabled": "Allow unencrypted local HTTP",
+          "local_http_origin": "Local HTTP origin (for example http://192.168.68.10:8123)",
+          "local_http_networks": "Allowed local client subnets (comma-separated, for example 192.168.68.0/24)",
+          "https_proxy_ips": "HTTPS proxy IP addresses (comma-separated; also trust these in HA)"
         }
       }
     },
     "error": {
-      "invalid_https_origin": "Use a valid HTTPS origin matching this direct TLS connection. Forwarded connections are not supported."
+      "invalid_https_origin": "Check origins, private local subnets, and proxy IPs. Submit from a connection allowed by these settings; forwarded HTTPS requires a proxy trusted by both HA and SOLBUDDY."
     },
     "abort": {
       "owner_required": "An authenticated, active Home Assistant owner must change guest options.",

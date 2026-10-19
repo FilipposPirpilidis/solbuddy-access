@@ -5,6 +5,7 @@ import getpass
 import http.client
 import json
 import ssl
+from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
 
 BASE = "/api/solbuddy_access/v1"
@@ -12,12 +13,17 @@ BASE = "/api/solbuddy_access/v1"
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("origin", help="Exact configured HTTPS origin")
+    parser.add_argument("origin", help="Exact configured HTTP or HTTPS origin")
     parser.add_argument("--ca-file", help="Optional trusted private CA certificate")
+    parser.add_argument(
+        "--allow-local-http",
+        action="store_true",
+        help="Allow unencrypted HTTP to a private IPv4 literal",
+    )
     args = parser.parse_args()
     origin = urlsplit(args.origin)
     if (
-        origin.scheme != "https"
+        origin.scheme not in ("http", "https")
         or not origin.hostname
         or origin.username
         or origin.password
@@ -25,14 +31,36 @@ def main():
         or origin.query
         or origin.fragment
     ):
-        parser.error("Supply an HTTPS origin only")
+        parser.error("Supply an HTTP or HTTPS origin only")
+    if origin.scheme == "http":
+        try:
+            address = ip_address(origin.hostname)
+            local = any(
+                address in ip_network(network)
+                for network in (
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                    "127.0.0.0/8",
+                )
+            )
+        except ValueError:
+            local = False
+        if not args.allow_local_http or not local:
+            parser.error("HTTP requires --allow-local-http and a private IPv4 literal")
+        print("Local HTTP sends credentials and commands without encryption.")
     context = ssl.create_default_context(cafile=args.ca_file)
 
     def send(method, operation, credential, sequence=None, data=None):
         # HTTPSConnection verifies certificates and never follows redirects.
-        connection = http.client.HTTPSConnection(
-            origin.hostname, origin.port or 443, context=context, timeout=20
-        )
+        if origin.scheme == "https":
+            connection = http.client.HTTPSConnection(
+                origin.hostname, origin.port or 443, context=context, timeout=20
+            )
+        else:
+            connection = http.client.HTTPConnection(
+                origin.hostname, origin.port or 80, timeout=20
+            )
         headers = {"Authorization": credential, "Content-Type": "application/json"}
         if sequence is not None:
             headers["X-Solbuddy-Sequence"] = str(sequence)

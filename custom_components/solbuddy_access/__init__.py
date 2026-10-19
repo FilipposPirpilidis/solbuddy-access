@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .executor import LightExecutor
 from .grants import GrantManager
 from .storage import GrantStorage, StorageUnavailable
+from .transport import TransportPolicy
 
 
 @dataclass(slots=True)
@@ -22,6 +23,7 @@ class RuntimeData:
     authenticator: GuestAuthenticator
     manager: GrantManager
     guest_origin: str = ""
+    transport_policy: TransportPolicy | None = None
 
 
 type SolbuddyConfigEntry = ConfigEntry[RuntimeData]
@@ -54,17 +56,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolbuddyConfigEntry) -> 
             )
     manager = GrantManager(hass, storage, audit, LightExecutor(hass))
     enabled = entry.options.get("guest_enabled", False) is True
-    origin = ""
-    if enabled:
-        try:
-            origin = guest_api.validate_origin(entry.options.get("guest_origin"))
-        except ValueError:
-            raise ConfigEntryError("Invalid guest HTTPS origin") from None
+    try:
+        policy = TransportPolicy.from_options(entry.options)
+    except ValueError:
+        raise ConfigEntryError("Invalid guest transport options") from None
     authenticator = GuestAuthenticator(
         manager,
         enabled=enabled and const.GUEST_TRANSPORT_VERIFIED,
     )
-    entry.runtime_data = RuntimeData(storage, authenticator, manager, origin)
+    entry.runtime_data = RuntimeData(
+        storage, authenticator, manager, policy.https_origin, policy
+    )
     hass.data[DOMAIN] = entry.runtime_data
     register(hass)
     if authenticator.enabled:

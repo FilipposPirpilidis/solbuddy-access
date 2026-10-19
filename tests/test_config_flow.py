@@ -191,3 +191,55 @@ async def test_guest_options_reject_admin(hass, owner_request, hass_admin_user):
     owner_request["hass_user"] = hass_admin_user
     result = await hass.config_entries.options.async_init(result["result"].entry_id)
     assert result["reason"] == "owner_required"
+
+
+async def test_enable_local_http_and_https_from_local_owner(hass, owner_request):
+    from unittest.mock import Mock
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    entry = result["result"]
+    transport = Mock()
+    transport.get_extra_info.side_effect = lambda key: (
+        ("192.168.68.25", 1234) if key == "peername" else None
+    )
+    request = make_mocked_request(
+        "GET",
+        "/api/websocket",
+        headers={"Host": "192.168.68.10:8123"},
+        transport=transport,
+    )
+    request[KEY_AUTHENTICATED] = True
+    request["hass_user"] = owner_request["hass_user"]
+    context = current_request.set(request)
+    try:
+        flow = await hass.config_entries.options.async_init(entry.entry_id)
+        values = {
+            "guest_enabled": True,
+            "guest_origin": "https://remote.example",
+            "local_http_enabled": True,
+            "local_http_origin": "http://192.168.68.10:8123",
+            "local_http_networks": "192.168.68.0/24",
+            "https_proxy_ips": "192.168.68.112",
+        }
+        result = await hass.config_entries.options.async_configure(
+            flow["flow_id"], values
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        policy = entry.runtime_data.transport_policy
+        assert policy.local_origin == values["local_http_origin"]
+        assert policy.https_origin == values["guest_origin"]
+        assert entry.runtime_data.authenticator.enabled
+        flow = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            flow["flow_id"], {"guest_enabled": False}
+        )
+        await hass.async_block_till_done()
+        assert not entry.runtime_data.authenticator.enabled
+        assert not entry.runtime_data.transport_policy.local_origin
+    finally:
+        current_request.reset(context)

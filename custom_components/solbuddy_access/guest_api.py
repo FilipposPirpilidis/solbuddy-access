@@ -1,9 +1,8 @@
-"""Direct-TLS-only local HTTP transport with a mandatory scoped authenticator."""
+"""Owner-configured HTTP/HTTPS transport with a mandatory scoped authenticator."""
 
 import asyncio
 import json
 import re
-from urllib.parse import urlsplit
 
 from aiohttp import web
 from homeassistant.core import HomeAssistant
@@ -14,6 +13,7 @@ from .auth import AuthError, GuestAccessDisabled
 from .grants import AccessDenied
 from .models import ValidationError
 from .storage import StorageUnavailable
+from .transport import TransportPolicy
 
 BASE = "/api/solbuddy_access/v1"
 HEADERS = {
@@ -22,51 +22,6 @@ HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
 }
-
-
-def validate_origin(value: object) -> str:
-    if type(value) is not str or len(value) > 256:
-        raise ValueError("Invalid HTTPS origin")
-    parts = urlsplit(value)
-    if (
-        parts.scheme != "https"
-        or parts.path not in ("", "/")
-        or parts.query
-        or parts.fragment
-        or parts.username
-        or parts.password
-        or not re.fullmatch(r"[a-zA-Z0-9.-]+(?::[0-9]{1,5})?", parts.netloc)
-        or parts.port == 0
-    ):
-        raise ValueError("Invalid HTTPS origin")
-    return "https://" + parts.netloc.lower()
-
-
-def secure_request(request: web.Request, origin: str) -> None:
-    """Do not substitute forwarded headers or request.scheme for actual TLS."""
-    if (
-        request.transport is None
-        or request.transport.get_extra_info("ssl_object") is None
-    ):
-        raise AuthError(403, "https_required")
-    if any(
-        name in request.headers
-        for name in (
-            "Forwarded",
-            "X-Forwarded-Proto",
-            "X-Forwarded-Host",
-            "X-Forwarded-For",
-        )
-    ):
-        raise AuthError(403, "proxy_not_supported")
-    hosts = request.headers.getall("Host", [])
-    origins = request.headers.getall("Origin", [])
-    if len(hosts) != 1 or hosts[0].lower() != urlsplit(origin).netloc:
-        raise AuthError(403, "origin_denied")
-    if origins and (len(origins) != 1 or origins[0] != origin):
-        raise AuthError(403, "origin_denied")
-    if request.query_string:
-        raise AuthError(400, "query_not_allowed")
 
 
 def credential(request: web.Request, scheme: str) -> str:
@@ -149,9 +104,11 @@ class GuestView(HomeAssistantView):
             if runtime is None or not runtime.authenticator.enabled:
                 return response({"error": "not_found"}, 404)
             auth = runtime.authenticator
-            secure_request(request, runtime.guest_origin)
-            peer = request.transport.get_extra_info("peername")
-            auth.limit_source(str(peer[0]) if peer else "unknown")
+            policy = runtime.transport_policy or TransportPolicy(
+                https_origin=runtime.guest_origin
+            )
+            source = policy.check(request, self.hass.http.trusted_proxies)
+            auth.limit_source(source)
             expected = "GET" if self.operation == "permissions" else "POST"
             if request.method != expected:
                 raise AuthError(405, "method_not_allowed")

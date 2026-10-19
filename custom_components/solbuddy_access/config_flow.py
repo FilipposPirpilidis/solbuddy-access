@@ -15,8 +15,8 @@ from homeassistant.helpers.http import KEY_AUTHENTICATED, current_request
 from . import const
 from .auth import AuthError
 from .const import DOMAIN
-from .guest_api import secure_request, validate_origin
 from .storage import GrantStorage, StorageUnavailable
+from .transport import TransportPolicy
 
 
 class SolbuddyConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -77,22 +77,27 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
         errors = {}
         if user_input is not None:
             try:
-                if set(user_input) - {"guest_enabled", "guest_origin"}:
-                    raise ValueError("Unexpected options")
+                policy = TransportPolicy.from_options(user_input)
                 enabled = user_input.get("guest_enabled", False)
-                if type(enabled) is not bool:
-                    raise ValueError("Invalid enablement")
-                origin = ""
                 if enabled:
                     if not const.GUEST_TRANSPORT_VERIFIED:
                         return self.async_abort(reason="security_gate_closed")
-                    origin = validate_origin(user_input.get("guest_origin"))
-                    secure_request(request, origin)
+                    policy.check(request, self.hass.http.trusted_proxies)
             except ValueError, AuthError:
                 errors["base"] = "invalid_https_origin"
             else:
                 return self.async_create_entry(
-                    title="", data={"guest_enabled": enabled, "guest_origin": origin}
+                    title="",
+                    data={
+                        "guest_enabled": enabled,
+                        "guest_origin": policy.https_origin,
+                        "local_http_enabled": bool(policy.local_origin),
+                        "local_http_origin": policy.local_origin,
+                        "local_http_networks": ", ".join(
+                            map(str, policy.local_networks)
+                        ),
+                        "https_proxy_ips": ", ".join(map(str, policy.proxy_ips)),
+                    },
                 )
         return self.async_show_form(
             step_id="init",
@@ -106,6 +111,26 @@ class SolbuddyOptionsFlow(OptionsFlowWithReload):
                     vol.Optional(
                         "guest_origin",
                         default=self.config_entry.options.get("guest_origin", ""),
+                    ): str,
+                    vol.Required(
+                        "local_http_enabled",
+                        default=self.config_entry.options.get(
+                            "local_http_enabled", False
+                        ),
+                    ): bool,
+                    vol.Optional(
+                        "local_http_origin",
+                        default=self.config_entry.options.get("local_http_origin", ""),
+                    ): str,
+                    vol.Optional(
+                        "local_http_networks",
+                        default=self.config_entry.options.get(
+                            "local_http_networks", ""
+                        ),
+                    ): str,
+                    vol.Optional(
+                        "https_proxy_ips",
+                        default=self.config_entry.options.get("https_proxy_ips", ""),
                     ): str,
                 }
             ),

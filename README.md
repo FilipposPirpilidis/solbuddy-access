@@ -2,7 +2,7 @@
 
 Self-hosted Home Assistant integration foundation for temporary, revocable guest access to selected lights and climate devices.
 
-**Status: Phase 3 guest authentication and sessions implemented and security-tested. Guest access defaults off and requires explicit owner configuration over direct HTTPS. This is a development build; real-device and release-readiness validation remain outstanding.**
+**Status: Phase 3 guest authentication and sessions implemented and security-tested. Guest access defaults off and requires explicit owner configuration. Local HTTP is a separate opt-in; remote HTTPS supports direct TLS or one trusted proxy. This is a development build; real-device and release-readiness validation remain outstanding.**
 
 The backend milestone is tested: a 72-hour grant for one selected light denies other entities and actions. The initial enrollment adapter accepts individual Hue v2 physical lights only; groups, templates, and unknown implementations are rejected. Tests use synthetic device fixtures with real HA registries and service dispatch; a real bridge/device has not been exercised. No Home Assistant account or homeowner token is given to guests.
 
@@ -17,6 +17,7 @@ The backend milestone is tested: a 72-hour grant for one selected light denies o
 - [Phase 1 implementation and validation](docs/phase-1.md)
 - [Phase 2 implementation and API examples](docs/phase-2.md)
 - [Phase 3 guest enablement, protocol, and client workflow](docs/phase-3.md)
+- [Local HTTP and remote HTTPS setup](docs/transports.md)
 
 The integration uses a Home Assistant config entry, versioned native storage, authenticated administrative WebSocket commands, and a fixed device-action adapter. A separate guest credential never authenticates to Home Assistant's general APIs.
 
@@ -30,7 +31,7 @@ SOLBUDDY Access is independent of HomeBuddy, with possible future integration. S
 - Strict schema checks and restart persistence of policies and revocation.
 - Owner-only create/list/get/check/revoke WebSocket commands, with current-user checks on each request.
 - Server-resolved device bindings, fixed internal light execution, audit admission, and serialized revocation/execution.
-- Single-use invitations, scoped rotating sessions, replay protection, rate limits, and direct-TLS guest control.
+- Single-use invitations, scoped rotating sessions, replay protection, rate limits, and configurable local HTTP / remote HTTPS guest control.
 - Owner-only options; guest access defaults off and credentials are invalidated on reload/restart/revocation.
 - MIT license, pinned development dependencies, and tests using HA fixtures with actual temporary disk storage.
 
@@ -49,7 +50,7 @@ uv run --locked ruff format --check custom_components tests examples
 
 Tests include temporary loopback HTTP and verified HTTPS servers. A sandbox must permit localhost sockets.
 
-For a disposable development HA installation, copy `custom_components/solbuddy_access` into the configuration directory's `custom_components` folder, restart HA, and add SOLBUDDY Access under Settings → Devices & services while signed in as the owner. Use the [owner WebSocket API examples](docs/phase-2.md) to manage grants. For guest enablement and the minimal interactive client, follow the [Phase 3 workflow](docs/phase-3.md). There is no custom guest UI yet. Removing the config entry retains storage for manual recovery; re-adding creates new empty storage and does not reactivate old grants.
+For a disposable development HA installation, copy `custom_components/solbuddy_access` into the configuration directory's `custom_components` folder, restart HA, and add SOLBUDDY Access under Settings → Devices & services while signed in as the owner. Use the [owner WebSocket API examples](docs/phase-2.md) to manage grants. For guest enablement and the minimal interactive client, follow the [transport setup](docs/transports.md) and [Phase 3 workflow](docs/phase-3.md). There is no custom guest UI yet. Removing the config entry retains storage for manual recovery; re-adding creates new empty storage and does not reactivate old grants.
 
 ## Repository and validation
 

@@ -1,5 +1,7 @@
 # Phase 3: secure guest sessions
 
+**Transport update:** Version 0.1.0.dev4 adds optional local HTTP and trusted-proxy HTTPS. Follow [the current transport setup](transports.md); it supersedes the original direct-TLS-only instructions below. The credential protocol is unchanged.
+
 Phase 3 adds invitation exchange, rotating sessions, and a dedicated HTTPS guest API. Guest access **defaults off**. The implementation security suite passed before the source registration gate was opened. No live Home Assistant installation has been enabled or deployed by this change.
 
 ## Enablement and owner workflow
