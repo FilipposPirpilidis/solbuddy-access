@@ -36,6 +36,9 @@ class AuthError(PermissionError):
         self.status = status
         self.code = code
 
+    def response_data(self) -> dict:
+        return {"error": self.code}
+
 
 @dataclass(slots=True)
 class Bucket:

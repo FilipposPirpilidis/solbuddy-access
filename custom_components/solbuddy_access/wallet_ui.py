@@ -12,6 +12,7 @@ ASSETS = {
     "owner-ui": ("wallet.html", "text/html"),
     "owner-panel.js": ("owner-panel.js", "application/javascript"),
     "client.js": ("client.js", "application/javascript"),
+    "freshness.js": ("freshness.js", "application/javascript"),
     "connectors.js": ("connectors.js", "application/javascript"),
     "wallet.css": ("wallet.css", "text/css"),
 }

@@ -2,7 +2,7 @@
 
 ## Current scope
 
-The user approved a native HA owner panel using the existing HA login, removal of duplicate origin/proxy fields, automatic local HTTP guest control and remote HTTPS via HA-trusted proxies (including cloudflared), and HTTPS-only wallet signing with a one-time session transfer to local HTTP. Owner management must remain available when guest access is disabled. Both guest and wallet access remain default-off. The user authorized committing and pushing this implementation to FilipposPirpilidis/solbuddy-access. Deployment and production configuration changes remain outside scope. Existing wallet eligibility and device restrictions remain authoritative.
+The user requested precise wallet freshness diagnostics: identify stale price versus stale balance and show observation age. Preserve the US$2 gate, 300-second price maximum, 60-second balance maximum, future-observation rejection, and default-off guest/wallet access. The user authorized committing and pushing the freshness diagnostics fix. Deployment remains outside scope. Return only safe age/status metadata after valid wallet proof, never balances, credentials, wallets, raw provider data or keys.
 
 ## Architecture
 
@@ -66,3 +66,7 @@ Version 0.1.0.dev6: 287 Python tests passed with 91% integration coverage; seven
 ## Native owner panel and HA-managed connections validation
 
 Version 0.1.0.dev7: full Python regression suite passed 307 tests with 91% coverage. After the final URL preference adjustment, all 24 targeted automatic-connection/handoff tests passed, including one additional regression (308 unique Python tests). Seven wallet connector tests and three isolated headless Chrome UI flows passed. Ruff, locked dependency sync, JS syntax, English translation parity and HA manifest-only validation passed. The dev dependency now includes the exact frontend required by HA 2026.10.2 so panel registration/setup tests use real frontend setup. The native panel reuses hass.callApi, lists reviewed lights/actions, and remains available while guest access is off. Cloudflare-style chains are tested through real HA middleware; the user's live tunnel and real devices are not deployed or verified. Both access flags default off. Validation preceded the user-authorized commit and push. See docs/wallet-access.md for current setup and tests/frontend/browser-check.mjs for reproducible synthetic UI flows.
+
+## Freshness diagnostics validation
+
+Version 0.1.0.dev8: 316 Python regression tests, 11 Node tests and four isolated Chrome browser flows passed. Ruff, locked dependency sync and HA manifest-only validation passed. HTTP tests verify age/status details after a valid signature, no session issuance on stale evidence, and no credentials/addresses in diagnostic responses or captured logs. Exact age limits, simultaneous stale observations, future observations, and expired evidence remain denied. US$2 valuation, default-off flags and provider selection are unchanged. Validation preceded the user-authorized commit and push. No production update is included.

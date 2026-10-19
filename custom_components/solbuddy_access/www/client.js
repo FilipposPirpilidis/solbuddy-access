@@ -1,10 +1,11 @@
 import {registry} from './connectors.js';
+import {freshnessMessage} from './freshness.js';
 const $ = id => document.getElementById(id);
 const base = '/api/solbuddy_access/v1/';
 const discover = registry();
 let wallets = [], session = null, connected = null, allowed = [];
 const https = location.protocol === 'https:';
-const errors = {eligibility_stale:'Price or balance observation is stale. No new session was issued.',eligibility_unavailable:'Fresh pricing or balance is unavailable. Try again later.',insufficient_sbud:'This wallet holds less than US$2 of SBUD.',invalid_wallet_proof:'Wallet proof expired or does not match the approved wallet.',unauthorized:'Invitation, transfer code, or session is invalid or expired.'};
+const errors = {eligibility_stale:'Price or balance observation is stale. No new session was issued.',eligibility_expired:'The eligibility check expired before the session could be issued. Sign in again for a fresh check.',eligibility_unavailable:'Fresh pricing or balance is unavailable. Try again later.',insufficient_sbud:'This wallet holds less than US$2 of SBUD.',invalid_wallet_proof:'Wallet proof expired or does not match the approved wallet.',unauthorized:'Invitation, transfer code, or session is invalid or expired.'};
 function status(text) {$('status').textContent=text;}
 function forget() {session=null;connected=null;$('controls').hidden=true;$('invitation').value='';$('transferCode').value='';$('issuedTransfer').value='';$('transferOutput').hidden=true;}
 async function call(path, auth=null, data={}, seq=null, method='POST') {
@@ -15,7 +16,7 @@ async function call(path, auth=null, data={}, seq=null, method='POST') {
   try {response=await fetch(base+path,{method,headers,body:method==='GET'?undefined:JSON.stringify(data),cache:'no-store',credentials:'omit',redirect:'error'});}
   catch {forget();throw new Error('Connection failed. Do not repeat uncertain device commands.');}
   const result=await response.json();
-  if(!response.ok) {if(session) forget();throw new Error(errors[result.error]||`Request denied (${response.status}): ${result.error||''}`);}
+  if(!response.ok) {if(session) forget();throw new Error(freshnessMessage(result)||errors[result.error]||`Request denied (${response.status}): ${result.error||''}`);}
   return result;
 }
 function setSession(value) {session={token:value.session_token,next:value.next_sequence};$('controls').hidden=false;$('expiry').textContent='Session expires: '+value.expires_at;}

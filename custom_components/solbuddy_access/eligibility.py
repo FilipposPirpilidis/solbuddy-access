@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -18,6 +19,17 @@ MAX_PRICE_AGE = 300
 MAX_BALANCE_AGE = 60
 
 
+class ObservationAgeError(AuthError):
+    """Only observation ages/statuses may cross the authenticated error boundary."""
+
+    def __init__(self, observations: dict):
+        super().__init__(503, "eligibility_stale")
+        self.observations = observations
+
+    def response_data(self) -> dict:
+        return super().response_data() | {"observations": self.observations}
+
+
 @dataclass(frozen=True, repr=False)
 class Evidence:
     wallet: str
@@ -26,13 +38,26 @@ class Evidence:
     deadline: float
 
     def check(self, wallet: str, now: float) -> None:
-        if (
-            self.wallet != wallet
-            or monotonic() >= self.deadline
-            or not 0 <= now - self.price_time <= MAX_PRICE_AGE
-            or not 0 <= now - self.balance_time <= MAX_BALANCE_AGE
+        if self.wallet != wallet or not math.isfinite(now):
+            raise AuthError(503, "eligibility_unavailable")
+        observations = {}
+        for name, timestamp, limit in (
+            ("price", self.price_time, MAX_PRICE_AGE),
+            ("balance", self.balance_time, MAX_BALANCE_AGE),
         ):
-            raise AuthError(503, "eligibility_stale")
+            age = now - timestamp
+            if not math.isfinite(age):
+                raise AuthError(503, "eligibility_unavailable")
+            observations[name] = {
+                "status": "future" if age < 0 else "stale" if age > limit else "fresh",
+                # Round away from zero for display only. Decisions use exact age.
+                "age_seconds": math.ceil(age) if age >= 0 else math.floor(age),
+                "max_age_seconds": limit,
+            }
+        if any(value["status"] != "fresh" for value in observations.values()):
+            raise ObservationAgeError(observations)
+        if monotonic() >= self.deadline:
+            raise AuthError(503, "eligibility_expired")
 
 
 def integer(value, minimum=0):

@@ -2420,7 +2420,7 @@ wheels = [
 
 [[package]]
 name = "solbuddy-access"
-version = "0.1.0.dev7"
+version = "0.1.0.dev8"
 source = { virtual = "." }
 
 [package.dev-dependencies]

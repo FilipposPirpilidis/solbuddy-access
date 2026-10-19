@@ -58,8 +58,10 @@ try {
   await guest.route('**/*',async route=>{
     const req=route.request(),url=new URL(req.url());requests.push({url:req.url(),body:req.postData()});
     const filename=url.pathname.split('/').pop();
-    if(['client.js','connectors.js','wallet.css'].includes(filename)) return route.fulfill({contentType:filename.endsWith('.js')?'application/javascript':'text/css',body:await readFile(new URL(filename,assets),'utf8')});
+    if(['client.js','connectors.js','freshness.js','wallet.css'].includes(filename)) return route.fulfill({contentType:filename.endsWith('.js')?'application/javascript':'text/css',body:await readFile(new URL(filename,assets),'utf8')});
     if(filename==='ui') return route.fulfill({contentType:'text/html',body:await readFile(new URL('wallet.html',assets),'utf8')});
+    if(filename==='challenge') return route.fulfill({contentType:'application/json',body:JSON.stringify({wallet_address:'synthetic-wallet',message:'Synthetic signed challenge'})});
+    if(filename==='verify') return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'eligibility_stale',observations:{price:{status:'stale',age_seconds:62160,max_age_seconds:300},balance:{status:'fresh',age_seconds:5,max_age_seconds:60}}})});
     const response=filename==='info'?{guest_enabled:true,wallet_enabled:true,https_origin:'https://fphomebuddy.uk'}:filename==='claim'?{session_token:'synthetic-session',next_sequence:1,expires_at:'test expiry'}:filename==='permissions'?{policies:[{entity_id:'light.test',actions:['turn_on']}]}:{outcome:'dispatched'};
     return route.fulfill({contentType:'application/json',body:JSON.stringify(response)});
   });
@@ -78,5 +80,13 @@ try {
   assert.deepEqual(errors,[]);
   checks++;
   await guest.screenshot({path:'/tmp/solbuddy-guest-page.png',fullPage:true});
-  console.log(`${checks} browser flows passed: disabled/native owner panel, create/invite/revoke, local session import and scoped controls.`);
+  await guest.addInitScript(()=>{window.phantom={solana:{publicKey:{toString:()=> 'synthetic-wallet'},connect:async()=>{},signMessage:async()=>({signature:new Uint8Array(64)})}};});
+  await guest.goto('https://fphomebuddy.uk/api/solbuddy_access/v1/wallet/ui');
+  await guest.getByLabel('Owner-issued invitation').fill('synthetic-invitation');
+  await guest.locator('#wallet').selectOption({label:'Phantom'});
+  await guest.getByRole('button',{name:'Connect and sign in'}).click();
+  await guest.getByText('Price observation is stale: 17h 16m old (maximum 5m). No new session was issued. The $2 SBUD requirement is unchanged.').waitFor();
+  assert(await guest.locator('#controls').isHidden());
+  assert.deepEqual(errors,[]);checks++;
+  console.log(`${checks} browser flows passed: disabled/native owner panel, create/invite/revoke, local session import and scoped controls, signed-login stale-price diagnostics.`);
 } finally {await browser.close();}

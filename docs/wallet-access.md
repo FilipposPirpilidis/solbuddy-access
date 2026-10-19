@@ -1,4 +1,4 @@
-# Wallet access — 0.1.0.dev7
+# Wallet access — 0.1.0.dev8
 
 SOLBUDDY now appears in the Home Assistant sidebar and uses your existing HA login. There is no owner-token field and no second proxy/origin configuration. Guest and wallet access both default off. Only the active HA owner can administer grants; other administrators are denied server-side.
 
@@ -43,3 +43,9 @@ Optional provider overrides still use a separate `solbuddy_access_wallet.yaml` b
 ## Validation limits
 
 Automated tests use real HA HTTP/auth/forwarded middleware, real Ed25519 signatures and synthetic provider/device data. Browser tests exercise the native panel and local transfer UI with synthetic API responses. Actual extension versions, your live tunnel, qualifying real wallet holdings and physical devices still need installation testing. Mobile QR/deep links are not implemented; mobile wallet browsers require compatible injected/Wallet Standard providers. No claim is made that a local automated test has deployed or validated your production HA instance.
+
+## Freshness diagnostics (dev8)
+
+After a valid wallet proof, a failed freshness check now identifies **price**, **balance**, or both, with each failing observation's age and allowed maximum. For example: “Price observation is stale: 17h 16m old (maximum 5m)” or “Balance observation is stale: 1m 32s old (maximum 1m)”. Ages describe source observations, not HTTP fetch time, and reflect the server check time rather than a live counter. Displayed seconds round away from zero; authorization uses the exact age.
+
+Future timestamps are labeled as ahead of the server clock and remain rejected. If both observations are fresh but the short-lived eligibility check expires during processing, the message instead says the eligibility check expired. No new session is issued in any of these cases. The US$2 minimum and freshness thresholds are unchanged. Error responses contain only status/age/limit metadata, never wallet balances, addresses, signatures, provider keys or raw provider responses.

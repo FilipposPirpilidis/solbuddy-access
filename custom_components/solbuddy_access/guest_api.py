@@ -265,7 +265,7 @@ class GuestView(HomeAssistantView):
                     )
                 raise AuthError(404, "not_found")
         except AuthError as err:
-            return response({"error": err.code}, err.status)
+            return response(err.response_data(), err.status)
         except AccessDenied:
             return response({"error": "not_allowed"}, 403)
         except GuestAccessDisabled, StorageUnavailable, TimeoutError:

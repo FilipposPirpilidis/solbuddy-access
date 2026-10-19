@@ -2,7 +2,7 @@
 
 Self-hosted Home Assistant integration foundation for temporary, revocable guest access to selected lights and climate devices.
 
-**Status: Wallet approval, Phantom/Solflare/Trust signing connectors, and fresh US$2 SBUD eligibility are implemented in 0.1.0.dev7. Wallet access defaults off. Phase 3 guest authentication and sessions are implemented and security-tested. Guest access defaults off and requires explicit owner configuration. Guest access enables detected local HTTP and HA-trusted remote HTTPS. Wallet signing remains HTTPS-only; a native sidebar panel uses the existing HA login. This is a development build; real-device and release-readiness validation remain outstanding.**
+**Status: Wallet approval, Phantom/Solflare/Trust signing connectors, and fresh US$2 SBUD eligibility are implemented in 0.1.0.dev8. Wallet access defaults off. Phase 3 guest authentication and sessions are implemented and security-tested. Guest access defaults off and requires explicit owner configuration. Guest access enables detected local HTTP and HA-trusted remote HTTPS. Wallet signing remains HTTPS-only; a native sidebar panel uses the existing HA login. This is a development build; real-device and release-readiness validation remain outstanding.**
 
 The backend milestone is tested: a 72-hour grant for one selected light denies other entities and actions. The initial enrollment adapter accepts individual Hue v2 physical lights only; groups, templates, and unknown implementations are rejected. Tests use synthetic device fixtures with real HA registries and service dispatch; a real bridge/device has not been exercised. No Home Assistant account or homeowner token is given to guests.
 

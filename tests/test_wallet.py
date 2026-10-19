@@ -560,3 +560,83 @@ def test_provider_file_secrets_and_invalid_fields(tmp_path):
     config.write_text("minimum_usd: 0\n")
     with pytest.raises(ValueError, match="configuration unavailable"):
         load_provider_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "price_age,balance_age,expected",
+    [
+        (17 * 3600 + 16 * 60, 5, ("stale", "fresh")),
+        (5, 92, ("fresh", "stale")),
+        (301, 61, ("stale", "stale")),
+        (-1, 5, ("future", "fresh")),
+        (5, -1, ("fresh", "future")),
+        (300.001, 60, ("stale", "fresh")),
+    ],
+)
+def test_freshness_diagnostics(price_age, balance_age, expected):
+    from custom_components.solbuddy_access.eligibility import ObservationAgeError
+
+    stamp = 1_800_000_000
+    evidence = Evidence(
+        "test-wallet", stamp - price_age, stamp - balance_age, monotonic() + 30
+    )
+    with pytest.raises(ObservationAgeError) as error:
+        evidence.check("test-wallet", stamp)
+    data = error.value.response_data()
+    assert set(data) == {"error", "observations"}
+    assert set(data["observations"]) == {"price", "balance"}
+    for name, status, limit in zip(
+        ("price", "balance"), expected, (300, 60), strict=True
+    ):
+        observation = data["observations"][name]
+        assert set(observation) == {"status", "age_seconds", "max_age_seconds"}
+        assert observation["status"] == status
+        assert observation["max_age_seconds"] == limit
+        assert type(observation["age_seconds"]) is int
+    assert data["observations"]["balance"]["age_seconds"] == balance_age
+    assert "test-wallet" not in str(data)
+
+
+def test_freshness_exact_boundaries_and_check_expiration():
+    evidence = Evidence("test-wallet", 700, 940, monotonic() + 30)
+    evidence.check("test-wallet", 1000)
+    object.__setattr__(evidence, "deadline", 0)
+    with pytest.raises(AuthError, match="eligibility_expired"):
+        evidence.check("test-wallet", 1000)
+    with pytest.raises(AuthError, match="eligibility_unavailable"):
+        evidence.check("wrong-wallet", 1000)
+
+
+async def test_freshness_details_reach_guest_after_wallet_proof(
+    tls_client, hass, wallet_setup, key, caplog
+):
+    auth, grant, invite, item, service = wallet_setup
+    hass.data[DOMAIN].authenticator = auth
+    service.verify.side_effect = lambda wallet, now: Evidence(
+        wallet,
+        int(now().timestamp()) - 62500,
+        int(now().timestamp()) - 95,
+        monotonic() + 30,
+    )
+    headers = {"Authorization": "SolbuddyInvite " + invite["invitation"]}
+    result = await tls_client.post(BASE + "/wallet/challenge", headers=headers, json={})
+    assert result.status == 200
+    signature = sign(key, await result.json())
+    result = await tls_client.post(
+        BASE + "/wallet/verify", headers=headers, json={"signature": signature}
+    )
+    assert result.status == 503
+    data = await result.json()
+    assert data["error"] == "eligibility_stale"
+    assert data["observations"]["price"]["age_seconds"] >= 62500
+    assert data["observations"]["balance"]["age_seconds"] >= 95
+    assert not auth._sessions
+    for secret in (invite["invitation"], signature, address(key)):
+        assert secret not in str(data)
+        assert secret not in caplog.text
+    # An invalid proof never gets observation diagnostics.
+    result = await tls_client.post(
+        BASE + "/wallet/verify", headers=headers, json={"signature": signature}
+    )
+    assert result.status == 401
+    assert "observations" not in await result.json()
