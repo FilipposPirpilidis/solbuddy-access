@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Set up SOLBUDDY Access",
-        "description": "Initialize local grants and owner-only management APIs. Guest access remains disabled; no device-control endpoint is exposed."
+        "description": "Initialize local grants and owner-only management APIs. Guest access defaults off; enable it separately in options after configuring direct HTTPS."
       }
     },
     "error": {
@@ -14,6 +14,25 @@
       "owner_required": "An authenticated, active Home Assistant owner must perform setup.",
       "already_configured": "SOLBUDDY Access is already configured.",
       "invalid_input": "Unexpected setup fields were supplied."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Guest access",
+        "description": "Requires direct HTTPS to Home Assistant at the exact origin below. TLS-terminating proxies are not supported. Disabling or reloading invalidates every guest credential.",
+        "data": {
+          "guest_enabled": "Enable guest access",
+          "guest_origin": "HTTPS origin (for example https://ha.example:8123)"
+        }
+      }
+    },
+    "error": {
+      "invalid_https_origin": "Use a valid HTTPS origin matching this direct TLS connection. Forwarded connections are not supported."
+    },
+    "abort": {
+      "owner_required": "An authenticated, active Home Assistant owner must change guest options.",
+      "security_gate_closed": "Guest access is disabled until the implementation security tests pass."
     }
   }
 }

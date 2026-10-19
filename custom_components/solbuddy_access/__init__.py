@@ -1,4 +1,4 @@
-"""SOLBUDDY Access owner management; guest endpoints remain absent."""
+"""SOLBUDDY Access owner management and explicitly enabled guest access."""
 
 from dataclasses import dataclass
 
@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
 
+from . import const, guest_api
 from .api import register
 from .audit import AuditStore
 from .auth import GuestAuthenticator
@@ -20,6 +21,7 @@ class RuntimeData:
     storage: GrantStorage
     authenticator: GuestAuthenticator
     manager: GrantManager
+    guest_origin: str = ""
 
 
 type SolbuddyConfigEntry = ConfigEntry[RuntimeData]
@@ -51,9 +53,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolbuddyConfigEntry) -> 
                 entry, data=dict(entry.data) | {"audit_initialized": True}
             )
     manager = GrantManager(hass, storage, audit, LightExecutor(hass))
-    entry.runtime_data = RuntimeData(storage, GuestAuthenticator(), manager)
+    enabled = entry.options.get("guest_enabled", False) is True
+    origin = ""
+    if enabled:
+        try:
+            origin = guest_api.validate_origin(entry.options.get("guest_origin"))
+        except ValueError:
+            raise ConfigEntryError("Invalid guest HTTPS origin") from None
+    authenticator = GuestAuthenticator(
+        manager,
+        enabled=enabled and const.GUEST_TRANSPORT_VERIFIED,
+    )
+    entry.runtime_data = RuntimeData(storage, authenticator, manager, origin)
     hass.data[DOMAIN] = entry.runtime_data
     register(hass)
+    if authenticator.enabled:
+        guest_api.register(hass)
     entry.async_on_unload(storage.close)
     return True
 

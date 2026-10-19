@@ -1,10 +1,10 @@
 # Security model and verification plan
 
-This is a proposed design, not a security certification. Guest control remains disabled until the authentication release gate passes.
+Phase 3 implements the guest controls below; this is not a security certification. The local authentication/TLS suite passed before the source gate opened. Guest control still defaults off. See [Phase 3 validation and limitations](phase-3.md).
 
 ## Trust assumptions and limits
 
-Trust the HA host, its owner, installed integrations, OS, and configured TLS termination. Treat guests, client payloads, credentials received over the network, and stale stored data as untrusted. Protect against malicious guests and accidental overbroad delegation. A compromised HA owner, malicious integration, or filesystem administrator can bypass an in-process integration; SOLBUDDY cannot sandbox HA itself.
+Trust the HA host, its owner, installed integrations, OS, and direct HA TLS. Treat guests, client payloads, credentials received over the network, and stale stored data as untrusted. Protect against malicious guests and accidental overbroad delegation. A compromised HA owner, malicious integration, or filesystem administrator can bypass an in-process integration; SOLBUDDY cannot sandbox HA itself.
 
 Direct service-call isolation does not prevent an existing HA automation from unlocking a door in response to a permitted light changing. Owners must review downstream automations and the physical function of each enrolled entity. Exclude groups, templates, scripts, and known forwarding integrations; initially accept only reviewed registry-backed device integrations. Domain names alone cannot prove physical safety, and unknown backing implementations must be denied. The milestone is proven with a known single-light fixture and a reviewed real light before release.
 
@@ -23,7 +23,7 @@ Direct service-call isolation does not prevent an existing HA automation from un
 | Old backup restores revoked grants | Never persist usable invitations/sessions; restoration requires fresh owner-approved credentials; restored grant records alone do not restore guest access |
 | Clock rollback | UTC request checks plus monotonic session deadlines; detect significant wall/monotonic drift and block sessions pending owner recovery; no automatic time tolerance that extends grants |
 | Clock wrong at startup | Require sane host time before credential issuance; no entirely offline process can independently prove real-world time after arbitrary clock/backup rollback |
-| Denial of service | Bounded payloads, sessions, queues, global authentication and per-session rate limits; reverse-proxy connection limits where deployed |
+| Denial of service | Bounded payloads, sessions, queues, global authentication and per-session rate limits; HA/host connection limits; TLS-terminating proxies unsupported in Phase 3 |
 | Browser misuse | Explicit HTTPS origin, reject unapproved Origin, no credential cookies or permissive CORS, no caching, no browser persistent token storage |
 | Entity replacement | Registry/backing identity checks at dispatch, deny changes until owner reapproval |
 | Audit leaks | Structured allowlisted fields, no raw exception/request dumps, bounded retention and access restricted to owner |

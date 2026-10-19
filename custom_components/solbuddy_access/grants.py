@@ -1,10 +1,11 @@
 """Owner administration and serialized internal execution boundary.
 
-No transport exposes execution in Phase 2. Its caller must eventually be the
-verified session boundary; tests call it directly with a synthetic grant binding.
+The guest HTTP boundary supplies a live-session guard; internal tests may call
+the execution engine directly with a synthetic grant binding.
 """
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from time import monotonic
@@ -44,6 +45,8 @@ class GrantManager:
         self._mono = monotonic()
         self._clock_healthy = True
         self.execution_timeout = 10.0
+        self.on_revoke: Callable[[str], None] = lambda grant_id: None
+        self.on_close: Callable[[], None] = lambda: None
 
     def now(self) -> datetime:
         wall, mono = dt_util.utcnow(), monotonic()
@@ -138,6 +141,7 @@ class GrantManager:
         self.get(grant_id)
         # Stops queued execution even before the durable revoke obtains its gate.
         self._revoking.add(grant_id)
+        self.on_revoke(grant_id)
         async with self._gate(grant_id, revocation=True):
             await self.require_owner(owner_id)
             # Revocation must remain available when clock/audit health is lost.
@@ -176,12 +180,14 @@ class GrantManager:
             **request,
         )
 
-    async def execute(self, grant_id: str, request: dict) -> dict:
-        """INTERNAL ONLY: a synthetic verified grant binding in Phase 2 tests.
-
-        No owner or guest command invokes this method. Phase 3 must authenticate
-        and bind sessions before exposing any execution route.
-        """
+    async def execute(
+        self,
+        grant_id: str,
+        request: dict,
+        *,
+        authorize: Callable[[], None] | None = None,
+    ) -> dict:
+        """Internal dispatch; guest transport must supply its live-session guard."""
         # Copy primitive request data so a caller cannot mutate it across awaits.
         if type(request) is not dict or set(request) != {
             "entity_id",
@@ -193,6 +199,8 @@ class GrantManager:
             raise ValidationError("Invalid parameters")
         request = request | {"parameters": dict(request["parameters"])}
         async with self._gate(grant_id):
+            if authorize is not None:
+                authorize()
             decision = self.check(grant_id, request)
             if not decision.allowed:
                 await self.audit.append("denied", grant_id, dt_util.utcnow())
@@ -201,6 +209,8 @@ class GrantManager:
                 "admitted", grant_id, self.now(), action=request["action"]
             )
             # Nothing may await between these fresh checks and executor invocation.
+            if authorize is not None:
+                authorize()
             decision = self.check(grant_id, request)
             if not decision.allowed:
                 await self.audit.append(
@@ -243,6 +253,7 @@ class GrantManager:
     async def close(self) -> None:
         """Block new work, then drain each bounded admitted command before unload."""
         self.active = False
+        self.on_close()
         async with self._create_lock:
             pass
         for lock in self._locks.values():

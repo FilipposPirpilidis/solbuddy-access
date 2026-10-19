@@ -1,6 +1,6 @@
-# API boundaries and authentication proposal
+# API boundaries and authentication
 
-The five owner grant commands are implemented in Phase 2 using a `payload` envelope, documented with runnable message examples in [Phase 2](phase-2.md). Invitation issuance and every guest endpoint below remain proposals and are not registered. There is no execute command on the owner API.
+The five owner grant commands are implemented in Phase 2 using a `payload` envelope, documented with runnable message examples in [Phase 2](phase-2.md). Phase 3 implements invitation issuance and the guest endpoints below, gated by explicit owner HTTPS options; they default off. See the [Phase 3 workflow and protocol](phase-3.md). There is no execute command on the owner API.
 
 ## Administrative API
 
@@ -13,13 +13,12 @@ Use HA's authenticated `/api/websocket` with integration command types. Require 
 | `solbuddy_access/grants/get` | Grant ID | Grant and policy details |
 | `solbuddy_access/grants/revoke` | Grant ID | Durable revocation result; repeated revocation is idempotent |
 | `solbuddy_access/grants/check` | Grant ID and proposed typed action | Advisory authorization decision; never executes |
-| `solbuddy_access/invitations/create` | Active grant ID | One-time invitation, shown once; available only after guest-auth gate |
 
 Server-owned fields are forbidden in input. No administrative command accepts an owner ID or status override. There is no guest-facing create/list/revoke operation, and no owner shortcut that bypasses the common policy engine to simulate guest control.
 
-## Proposed local guest authentication
+## Local guest authentication
 
-Use random capability credentials rather than passwords or HA tokens. This is a proposed security design requiring implementation review and tests, not a finished authentication mechanism. TLS is mandatory, including on a LAN. Support HA HTTPS or a correctly configured trusted TLS reverse proxy; never trust arbitrary forwarded headers or open CORS. No port forwarding or public deployment is part of v0.1 setup.
+Use random capability credentials rather than passwords or HA tokens. Phase 3 implements and tests this lifecycle. TLS is mandatory, including on a LAN. Phase 3 supports direct HA HTTPS only and rejects forwarded headers; TLS-terminating proxies are unsupported. No port forwarding or public deployment is part of v0.1 setup.
 
 1. The authenticated owner creates a random 256-bit invitation for one currently active grant, expiring in five minutes. Only its SHA-256 digest is held in memory. The owner transfers it through a trusted channel; no URLs, QR query parameters, logs, or browser history contain the credential.
 2. The guest presents the invitation in an authorization header to `POST /api/solbuddy_access/v1/session`. This is credential authentication, not an anonymous session-creation endpoint. Atomically consume the invitation under the grant gate. Recheck grant activity and storage health. Return a fresh random 256-bit opaque session token once with `Cache-Control: no-store`.
@@ -51,10 +50,10 @@ Execution payload example:
 }
 ```
 
-No grant ID, service name, template, target array, device ID, or raw HA data is accepted. Validate strict object shape and size before expensive work. Proposed limits: 8 KiB bodies, bounded header lengths, one in-flight operation/session, 30 requests/minute/session with burst 5, and a bounded global limiter for authentication attempts. Source-IP limits supplement global/session limits but never establish identity; forwarded addresses require HA's trusted proxy configuration. Keep limiter maps bounded and use monotonic time.
+No grant ID, service name, template, target array, device ID, or raw HA data is accepted. Validate strict object shape and size before expensive work. Implemented limits: 8 KiB bodies, bounded header lengths, one in-flight operation/session, 30 requests/minute/session with burst 5, and a bounded global limiter for authentication attempts. Source-IP limits supplement global/session limits but never establish identity; forwarded addresses are rejected in Phase 3. Keep limiter maps bounded and use monotonic time.
 
 Consume sequences even on denied actions; do not replay on timeout. Return a bounded receipt with outcome `dispatched`, `denied`, or `unknown`; HA accepting a service call is not proof the physical device changed. Missing/invalid credentials return generic 401; invalid input 400, denied active-session operations 403, sequence conflicts 409, limits 429, and unavailable security dependencies 503. Error bodies must not disclose other grants/entities. An expired/revoked session receives 401 without explaining grant existence.
 
 ## Enablement gate
 
-Before guest routes exist, test authentication, expiry, rotation, cross-grant isolation, replay races, TLS/proxy assumptions, header redaction, size/rate limits, and absence of any unauthenticated path using actual HA HTTP fixtures. Test that SOLBUDDY credentials fail on HA's ordinary API and HA credentials are not silently accepted as guest credentials. Document and review the complete credential lifecycle and client storage before enabling control. Until then, `GuestAuthenticator` returns denial and tests use explicit synthetic principals internally.
+Before guest routes exist, test authentication, expiry, rotation, cross-grant isolation, replay races, TLS/proxy assumptions, header redaction, size/rate limits, and absence of any unauthenticated path using actual HA HTTP fixtures. Test that SOLBUDDY credentials fail on HA's ordinary API and HA credentials are not silently accepted as guest credentials. Document and review the complete credential lifecycle and client storage before enabling control. The Phase 3 authentication, TLS, and owner-options tests passed before the source registration gate was opened. Runtime guest access still defaults off; fresh installations register no guest routes until the owner opts in. See [validation and limitations](phase-3.md).

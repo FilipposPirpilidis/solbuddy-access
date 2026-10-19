@@ -1,6 +1,6 @@
 # Incremental implementation roadmap
 
-Status: Phases 1 and 2 backend code and tests implemented. The selected GitHub repository resolves the documentation-URL validation item. Phase 3 has not started; guest routes remain absent. See [Phase 2 implementation evidence](phase-2.md). Real-device validation remains a release gate.
+Status: Phases 1–3 implemented. Phase 3 security tests pass; guest access defaults off and requires explicit owner HTTPS configuration. See [Phase 3 evidence and workflow](phase-3.md). Real-device validation remains a release gate.
 
 | Phase | Deliverables | Exit criteria |
 | --- | --- | --- |
@@ -33,4 +33,4 @@ A future Solana proposal must specify challenge uniqueness, domain/audience bind
 
 ## Review decisions
 
-Approved: owner-only administration; immutable grants; 15-minute rotating guest sessions capped by grant expiry; fresh owner invitation after restart/expired session; HTTPS required; reviewed registry-backed physical devices only; MIT licensing. Phase 2 implements owner administration and the internal execution boundary. Guest sessions and transport remain unimplemented.
+Approved: owner-only administration; immutable grants; 15-minute rotating guest sessions capped by grant expiry; fresh owner invitation after restart/expired session; HTTPS required; reviewed registry-backed physical devices only; MIT licensing. Phase 2 implements owner administration and the internal execution boundary. Phase 3 implements guest sessions and direct-TLS transport, with owner opt-in required.

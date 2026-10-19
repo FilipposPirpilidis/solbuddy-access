@@ -1,6 +1,6 @@
 # MVP architecture proposal
 
-Status: architecture approved on 2026-10-19. Phase 2 backend is implemented; this document describes the complete target architecture, including later work. See [Phase 2 status](phase-2.md) for the implemented boundary and device support.
+Status: architecture approved on 2026-10-19. Phases 1–3 are implemented; this document describes the complete target architecture, including later work. See [Phase 3 status](phase-3.md) for the guest transport boundary and [Phase 2](phase-2.md) for device support.
 
 ## Home Assistant conventions reviewed
 

@@ -125,3 +125,69 @@ async def test_guest_auth_always_disabled(credential):
 
     with pytest.raises(GuestAccessDisabled):
         await GuestAuthenticator().authenticate(credential)
+
+
+@pytest.mark.parametrize(
+    "tls,gate,expected",
+    [
+        (False, True, "invalid_https_origin"),
+        (True, False, "security_gate_closed"),
+        (True, True, None),
+    ],
+)
+async def test_guest_options_security_gate(
+    hass, owner_request, monkeypatch, tls, gate, expected
+):
+    from unittest.mock import Mock
+
+    from custom_components.solbuddy_access import const
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    entry = result["result"]
+    assert not entry.runtime_data.authenticator.enabled
+    monkeypatch.setattr(const, "GUEST_TRANSPORT_VERIFIED", gate)
+    transport = Mock()
+    transport.get_extra_info.return_value = object() if tls else None
+    request = make_mocked_request(
+        "GET", "/api/websocket", headers={"Host": "ha.example"}, transport=transport
+    )
+    request[KEY_AUTHENTICATED] = True
+    request["hass_user"] = owner_request["hass_user"]
+    context = current_request.set(request)
+    try:
+        flow = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            flow["flow_id"],
+            {"guest_enabled": True, "guest_origin": "https://ha.example"},
+        )
+        if expected == "security_gate_closed":
+            assert result["reason"] == expected
+        elif expected:
+            assert result["errors"] == {"base": expected}
+        else:
+            assert result["type"] is FlowResultType.CREATE_ENTRY
+            await hass.async_block_till_done()
+            assert entry.runtime_data.authenticator.enabled
+            flow = await hass.config_entries.options.async_init(entry.entry_id)
+            await hass.config_entries.options.async_configure(
+                flow["flow_id"], {"guest_enabled": False}
+            )
+            await hass.async_block_till_done()
+            assert not entry.runtime_data.authenticator.enabled
+    finally:
+        current_request.reset(context)
+
+
+async def test_guest_options_reject_admin(hass, owner_request, hass_admin_user):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    owner_request["hass_user"] = hass_admin_user
+    result = await hass.config_entries.options.async_init(result["result"].entry_id)
+    assert result["reason"] == "owner_required"

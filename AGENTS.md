@@ -2,7 +2,7 @@
 
 ## Current scope
 
-The user approved Phase 2: implement owner-only create/list/get/check/revoke WebSocket commands, trusted single-light enrollment, internal fixed light execution, durable auditing, and concurrent revoke/execute defenses and tests. Preserve the Phase 1 foundation. Guest authentication stays deny-only; do not register guest endpoints or expose any execute command. Session issuance, replay protection, guest transport, and climate adapters remain later phases. The selected repository is https://github.com/FilipposPirpilidis/solbuddy-access. The user explicitly authorized committing and pushing the Phase 2 implementation there, with guest endpoints disabled. This does not authorize deployment or enabling guest access.
+The user approved Phase 3: implement secure invitation exchange, scoped short-lived sessions, renewal, replay protection, rate limits, HTTPS guest transport, and security tests. The authentication/TLS/owner-options suite passed before opening the source registration gate. Keep guest runtime access off by default and preserve the security tests. Preserve owner-only administration and the existing execution checks. Guest access must default off and require explicit owner configuration of an HTTPS origin. The user authorized committing and pushing Phase 3 to the selected repository with guest access disabled by default. Deployment, climate adapters, wallet integration, and production guest enablement remain outside this request. The Phase 2 commit is already pushed to https://github.com/FilipposPirpilidis/solbuddy-access.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ The user approved Phase 2: implement owner-only create/list/get/check/revoke Web
 - Separate models, storage, grant lifecycle, authentication, policy evaluation, and HA device execution. All transports call the same application service.
 - Do not use a polling coordinator for local grant state. Use lifecycle timers for notifications and authoritative request-time expiration checks.
 - Administration requires a currently active HA owner. Never treat a network location, a missing user context, or an automation as an owner.
-- Guest credentials must not authenticate to the HA REST or WebSocket API. Keep guest transport unregistered until authentication and security tests pass.
+- Guest credentials must not authenticate to the HA REST or WebSocket API. Register guest transport only after the tested source gate passes and an owner explicitly enables it.
 
 ## Security invariants
 
@@ -32,7 +32,10 @@ The user approved Phase 2: implement owner-only create/list/get/check/revoke Web
 - Run `uv sync --locked --group dev`, `uv run --locked pytest`, and Ruff check/format checks. The HTTP test requires loopback sockets. Preserve the lockfile when changing dependencies.
 - Native Store in the pinned HA release can swallow write errors and automatically accept unknown minor versions. Keep explicit envelope validation and independent disk verification; tests must exercise actual Store IO, not only mocks.
 - Setup authenticates the active owner through HA's current HTTP request and re-resolves the user at each flow step. Do not trust flow context/user input as owner identity.
-- Store only light policies; climate remains denied until Phase 4. Phase 2 registers owner management commands only, with no execute command, guest route, or integration HA service.
+- Store only light policies; climate remains denied until Phase 4. There is no WebSocket execute command or integration HA service. Guest execution requires a server-bound, live session rechecked at final dispatch.
+- Invitations and sessions use distinct 256-bit random credentials and only SHA-256 digests in volatile memory. Invalidate on revocation, replacement, restart, reload, and disabling access. Never persist credentials.
+- Use an owner-authenticated HTTP invitation endpoint, not a secret-bearing WebSocket response: the pinned HA WebSocket debug logger logs outgoing message bodies.
+- Phase 3 initially requires direct TLS to HA, an exact configured origin/Host, no cross-origin access, bounded input, and serialized request sequences. Do not trust forwarded headers as proof of TLS.
 - Use the selected GitHub repository's README as the documentation URL. Report the exact validation performed; do not equate a manifest-only check with the full hassfest suite.
 - Enrollment must resolve registry/config-entry/device identity server-side and verify an explicitly reviewed physical light implementation. Never accept registry IDs or trusted-device flags from API input.
 - Do not block the event loop. Use HA lifecycle helpers and unload callbacks; clean up timers and in-memory sessions.
@@ -42,3 +45,7 @@ The user approved Phase 2: implement owner-only create/list/get/check/revoke Web
 - Document behavior, limitations, and validation evidence. Do not claim checks passed unless run. Use synthetic data only in examples and fixtures.
 - Never commit credentials or local HA storage. Do not expose a remote endpoint, publish, or deploy as part of local development without authorization.
 - Solana, tokens, custom panels, and smart-lock workflows require separate future scope; do not implement them speculatively.
+
+## Phase 3 validation baseline
+
+On 2026-10-19, the full suite passed 191 tests with 92% integration coverage; Ruff and the official HA 2026.10.2 manifest-only validator passed. The authentication/HTTPS/options suite passed before `GUEST_TRANSPORT_VERIFIED` was opened. Preserve default-off owner options and credential invalidation. See `docs/phase-3.md` for protocol, client workflow, supported direct-TLS topology, and remaining real-device/full-hassfest release checks.

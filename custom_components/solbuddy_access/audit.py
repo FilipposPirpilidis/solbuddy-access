@@ -13,7 +13,17 @@ from .models import parse_time, require_keys
 from .storage import StorageUnavailable
 
 EVENTS = frozenset(
-    {"create_requested", "revoked", "denied", "admitted", "dispatched", "unknown"}
+    {
+        "create_requested",
+        "revoked",
+        "denied",
+        "admitted",
+        "dispatched",
+        "unknown",
+        "invitation_issued",
+        "session_issued",
+        "session_rotated",
+    }
 )
 MAX_RECORDS = 10_000
 
